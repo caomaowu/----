@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
 )
 from qfluentwidgets import (
     BreadcrumbBar, FluentIcon, TransparentToolButton, 
-    SearchLineEdit, Action, CommandBar, Flyout, FlyoutAnimationType, MessageBoxBase, SubtitleLabel, BodyLabel
+    SearchLineEdit, Action, CommandBar, Flyout, FlyoutAnimationType, MessageBoxBase, SubtitleLabel, BodyLabel, InfoBar, InfoBarPosition
 )
 
 from dcpm.ui.theme.colors import COLORS
@@ -105,16 +105,42 @@ class FileBrowser(QWidget):
         if not self.current_root:
             return
             
-        current_idx = self.list_view.rootIndex()
-        target_dir = Path(self.model.filePath(current_idx))
+        # Determine Drop Target
+        target_dir = None
         
-        if not target_dir.exists():
-            target_dir = self.current_root
+        # Check if dropped onto a specific item (folder) in the list view
+        # We need to map the position to the list view coordinate system if needed, 
+        # but since dropEvent is on FileBrowser (parent), we need to check if cursor is over a list item.
+        # Actually, since we disabled drop on ListView, the event bubbles to FileBrowser with global pos?
+        # No, it's relative to FileBrowser.
+        
+        # Let's try to find the index under mouse position
+        # We need to map pos to list_view coordinates
+        list_view_pos = self.list_view.mapFrom(self, event.position().toPoint())
+        index = self.list_view.indexAt(list_view_pos)
+        
+        if index.isValid():
+            info = self.model.fileInfo(index)
+            if info.isDir():
+                target_dir = Path(self.model.filePath(index))
+        
+        # If not dropped on a folder, use current directory
+        if not target_dir:
+            current_idx = self.list_view.rootIndex()
+            target_dir = Path(self.model.filePath(current_idx))
+            
+            if not target_dir.exists():
+                target_dir = self.current_root
 
         urls = event.mimeData().urls()
+        imported_count = 0
         for url in urls:
             src_path = Path(url.toLocalFile())
             if src_path.exists():
+                # Prevent self-copy (Source == Destination)
+                if src_path.parent == target_dir:
+                    continue
+                    
                 try:
                     dest_path = target_dir / src_path.name
                     if dest_path.exists():
@@ -128,10 +154,22 @@ class FileBrowser(QWidget):
                         shutil.copytree(src_path, dest_path)
                     else:
                         shutil.copy2(src_path, dest_path)
+                    imported_count += 1
                 except Exception as e:
                     # In a real app, show error dialog
                     print(f"Error copying file: {e}")
         
+        if imported_count > 0:
+            InfoBar.success(
+                title='导入成功',
+                content=f"已成功导入 {imported_count} 个文件",
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP_RIGHT,
+                duration=2000,
+                parent=self
+            )
+
         event.accept()
 
     def _init_header(self):
@@ -184,6 +222,20 @@ class FileBrowser(QWidget):
         self.list_view.setFrameShape(QFrame.Shape.NoFrame)
         self.list_view.setStyleSheet("background: transparent; border: none;")
         self.list_view.setSelectionMode(QListView.SelectionMode.ExtendedSelection)
+        
+        # Drag & Drop Configuration
+        self.list_view.setAcceptDrops(False) # Disable default view drop to let parent handle it, or we handle it here
+        # Actually, QListView consumes drop events if setAcceptDrops is True. 
+        # But we implemented dragEnterEvent/dropEvent on the parent Widget (FileBrowser).
+        # QListView is a child of FileBrowser. If mouse is over QListView, it receives the event first.
+        # If it doesn't accept drops, the event propagates to parent.
+        # BUT, standard QListView might not propagate nicely if it thinks it can handle something or just ignores.
+        # Let's ensure QListView ignores drops so parent gets them, OR we install event filter.
+        # The safest way for "blank area drop" is letting the parent handle it.
+        # Let's explicitly ignore drops on list view to bubble up.
+        self.list_view.setAcceptDrops(False) 
+        self.list_view.setDragEnabled(True) # Allow dragging items OUT (or within)
+        self.list_view.setDragDropMode(QListView.DragDropMode.DragOnly) # We handle drops manually on parent
         
         # Custom Delegate for Fluent Look
         self.delegate = FileItemDelegate(self.list_view)
@@ -315,6 +367,12 @@ class FileBrowser(QWidget):
             explorer_action.triggered.connect(lambda: subprocess.Popen(f'explorer /select,"{os.path.normpath(path)}"', shell=True))
             menu.addAction(explorer_action)
             
+            # Open With
+            if not Path(path).is_dir():
+                open_with_action = QAction(FluentIcon.APPLICATION.icon(), "打开方式...", self)
+                open_with_action.triggered.connect(lambda: subprocess.Popen(f'rundll32.exe shell32.dll,OpenAs_RunDLL {os.path.normpath(path)}', shell=True))
+                menu.addAction(open_with_action)
+
             menu.addSeparator()
             
             # --- Edit Actions ---
