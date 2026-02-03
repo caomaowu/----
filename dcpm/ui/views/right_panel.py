@@ -150,6 +150,12 @@ class RightPanel(QWidget):
             btn.clicked.connect(lambda _, t=tag: self.tagSelected.emit(t))
             self.tags_grid.addWidget(btn, i // 2, i % 2)
 
+        if not tags:
+            lbl = QLabel("暂无标签")
+            lbl.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 12px; padding: 10px 0;")
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.tags_grid.addWidget(lbl, 0, 0, 1, 2)
+
     def update_activities(self, activities: list[tuple[str, str, str]]):
         # activities: [(text, time, color_hex), ...]
         while self.activity_container.count():
@@ -190,5 +196,6 @@ class RightPanel(QWidget):
         
         if not activities:
             lbl = QLabel("暂无动态")
-            lbl.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 12px;")
+            lbl.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 12px; padding: 10px 0;")
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.activity_container.addWidget(lbl)

@@ -262,6 +262,32 @@ class MainWindow(QMainWindow):
         for tag, count in stats.popular_tags[:20]:
             self._tag_menu.addAction(Action(f"{tag} ({count})", triggered=lambda t=tag: self._set_filter("tag", t)))
 
+    def _update_right_panel_data(self, stats: DashboardStats):
+        # Tags
+        self._right_panel.update_tags(stats.popular_tags, set())
+
+        # Activities
+        try:
+            raw_acts = get_recent_activity(Path(self._library_root))
+            activities = []
+            for act in raw_acts:
+                # act: {id, name, customer, status, time}
+                name = act["name"]
+                time_str = datetime.fromisoformat(act["time"]).strftime("%m-%d %H:%M")
+                status = act["status"]
+                
+                color = COLORS["info"]
+                if status == "completed" or status == "delivered":
+                    color = COLORS["success"]
+                elif status == "archived":
+                    color = COLORS["secondary"]
+                
+                activities.append((f"操作了项目 {name}", time_str, color))
+            self._right_panel.update_activities(activities)
+        except Exception as e:
+            # Fallback for UI if DB fails, ensures panel is not empty
+            self._right_panel.update_activities([])
+
     def _set_filter(self, type_: str, value: str):
         if type_ == "status":
             self._status_filter = "all" if value == "all" else f"status:{value}"
