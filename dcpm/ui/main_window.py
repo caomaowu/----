@@ -167,8 +167,8 @@ class MainWindow(QMainWindow):
         self._scroll.setStyleSheet("background: transparent;")
 
         self._grid_container = QWidget()
-        self._grid_layout_wrap = QVBoxLayout(self._grid_container)
-        self._grid_layout_wrap.setContentsMargins(0, 0, 0, 0)
+        # 初始给一个空 layout，防止 _rebuild_grid 前的空白期
+        QVBoxLayout(self._grid_container).setContentsMargins(0, 0, 0, 0)
 
         self._scroll.setWidget(self._grid_container)
         layout.addWidget(self._scroll)
@@ -308,29 +308,32 @@ class MainWindow(QMainWindow):
         self._rebuild_grid()
 
     def _rebuild_grid(self) -> None:
-        # 清空容器
-        if self._grid_container.layout():
-            QWidget().setLayout(self._grid_container.layout()) # 也就是销毁旧layout
-            
+        # 创建一个新的容器 Widget 来替换旧的
+        new_container = QWidget()
+        # 必须设置透明背景，否则可能会遮挡
+        new_container.setStyleSheet("background: transparent;")
+        
         layout = None
         if self._view_mode == "grid":
-            layout = QGridLayout()
+            layout = QGridLayout(new_container)
+            layout.setContentsMargins(0, 0, 0, 0) # 避免双重 padding
             layout.setSpacing(24)
             cols = 3
             for idx, entry in enumerate(self._filtered_projects):
-                card = ProjectCard(entry, parent=self._grid_container)
+                card = ProjectCard(entry, parent=new_container)
                 card.openRequested.connect(self._open_project)
                 card.pinToggled.connect(self._pin_project)
                 card.manageRequested.connect(self._manage_project)
                 layout.addWidget(card, idx // cols, idx % cols)
-            # 占位
+            # 底部弹簧，确保内容靠上
             layout.setRowStretch((len(self._filtered_projects) // cols) + 1, 1)
             
         elif self._view_mode == "list":
-            layout = QVBoxLayout()
+            layout = QVBoxLayout(new_container)
+            layout.setContentsMargins(0, 0, 0, 0)
             layout.setSpacing(12)
             for entry in self._filtered_projects:
-                card = ProjectCard(entry, ProjectCardOptions(compact=True), parent=self._grid_container)
+                card = ProjectCard(entry, ProjectCardOptions(compact=True), parent=new_container)
                 card.openRequested.connect(self._open_project)
                 card.pinToggled.connect(self._pin_project)
                 card.manageRequested.connect(self._manage_project)
@@ -338,7 +341,8 @@ class MainWindow(QMainWindow):
             layout.addStretch()
             
         elif self._view_mode == "timeline":
-            layout = QVBoxLayout()
+            layout = QVBoxLayout(new_container)
+            layout.setContentsMargins(0, 0, 0, 0)
             layout.setSpacing(12)
             groups: dict[str, list[ProjectEntry]] = {}
             for entry in self._filtered_projects:
@@ -346,18 +350,20 @@ class MainWindow(QMainWindow):
                 groups.setdefault(key, []).append(entry)
             
             for key in sorted(groups.keys(), reverse=True):
-                header = SubtitleLabel(key, self._grid_container)
+                header = SubtitleLabel(key, new_container)
                 header.setStyleSheet(f"color: {COLORS['primary']}; font-weight: bold; margin-top: 12px;")
                 layout.addWidget(header)
                 for entry in groups[key]:
-                    card = ProjectCard(entry, ProjectCardOptions(compact=True), parent=self._grid_container)
+                    card = ProjectCard(entry, ProjectCardOptions(compact=True), parent=new_container)
                     card.openRequested.connect(self._open_project)
                     card.pinToggled.connect(self._pin_project)
                     card.manageRequested.connect(self._manage_project)
                     layout.addWidget(card)
             layout.addStretch()
 
-        self._grid_container.setLayout(layout)
+        # 替换 ScrollArea 中的 Widget
+        self._scroll.setWidget(new_container)
+        self._grid_container = new_container
 
     def _update_index_status(self, enabled: bool):
         self._sidebar.index_status.setText("索引已启用" if enabled else "普通模式")
@@ -426,7 +432,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "提示", "请先在右侧选择库")
             return
         dlg = _CreateProjectDialog(self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
+        if dlg.exec(): # MessageBoxBase uses standard exec but returns boolean or result, checking standard way
             try:
                 from dcpm.services.project_service import create_project
                 res = create_project(Path(self._library_root), dlg.build_request())
@@ -455,8 +461,8 @@ class MainWindow(QMainWindow):
                 from dcpm.services.project_service import archive_project, unarchive_project, edit_project_metadata
                 
                 # Logic same as before
-                if dlg.pinned != entry.pinned:
-                    toggle_pinned(Path(self._library_root), entry.project.id, dlg.pinned)
+                if dlg.is_pinned != entry.pinned:
+                    toggle_pinned(Path(self._library_root), entry.project.id, dlg.is_pinned)
                 
                 desired = dlg.status
                 is_archived_dir = "归档项目" in Path(entry.project_dir).parts
@@ -464,50 +470,90 @@ class MainWindow(QMainWindow):
                 
                 if desired == "archived" and not is_archived_dir:
                     res = archive_project(root, Path(entry.project_dir))
-                    upsert_one_project(root, ProjectEntry(project=res.project, project_dir=res.project_dir, pinned=dlg.pinned))
+                    upsert_one_project(root, ProjectEntry(project=res.project, project_dir=res.project_dir, pinned=dlg.is_pinned))
                 elif desired != "archived" and is_archived_dir:
                     res = unarchive_project(root, Path(entry.project_dir), status=desired)
-                    upsert_one_project(root, ProjectEntry(project=res.project, project_dir=res.project_dir, pinned=dlg.pinned))
+                    upsert_one_project(root, ProjectEntry(project=res.project, project_dir=res.project_dir, pinned=dlg.is_pinned))
                 else:
-                    updated = edit_project_metadata(Path(entry.project_dir), tags=dlg.tags, status=desired, description=dlg.description)
-                    upsert_one_project(root, ProjectEntry(project=updated, project_dir=Path(entry.project_dir), pinned=dlg.pinned))
+                    updated = edit_project_metadata(Path(entry.project_dir), tags=dlg.tags_list, status=desired, description=dlg.description)
+                    upsert_one_project(root, ProjectEntry(project=updated, project_dir=Path(entry.project_dir), pinned=dlg.is_pinned))
                 self._reload_projects()
             except Exception as e:
                 QMessageBox.critical(self, "错误", str(e))
 
 
-class _CreateProjectDialog(QDialog):
+from qfluentwidgets import (
+    BodyLabel, CardWidget, SegmentedWidget, SubtitleLabel,
+    FluentIcon as FI, IconWidget, MessageBoxBase, LineEdit, 
+    StrongBodyLabel, PrimaryPushButton, PushButton
+)
+
+class _CreateProjectDialog(MessageBoxBase):
+    """Fluent 风格的新建项目对话框"""
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("新建项目")
-        self.setFixedSize(500, 300)
-        self.setStyleSheet(f"background: {COLORS['card']};")
-        layout = QVBoxLayout(self)
+        self.titleLabel = SubtitleLabel("新建项目", self)
         
-        form = QFormLayout()
-        self.month = QLineEdit(datetime.now().strftime("%Y-%m"))
-        self.cust = QLineEdit()
-        self.name = QLineEdit()
-        self.tags = QLineEdit()
-        form.addRow("月份", self.month)
-        form.addRow("客户", self.cust)
-        form.addRow("名称", self.name)
-        form.addRow("标签", self.tags)
-        layout.addLayout(form)
+        # 字段容器
+        self.viewLayout.addWidget(self.titleLabel)
+        self.viewLayout.addSpacing(16)
         
-        btns = QHBoxLayout()
-        ok = QPushButton("创建")
-        ok.clicked.connect(self.accept)
-        btns.addWidget(ok)
-        layout.addLayout(btns)
+        # 月份
+        self.monthLabel = StrongBodyLabel("月份 (YYYY-MM)", self)
+        self.monthEdit = LineEdit(self)
+        self.monthEdit.setText(datetime.now().strftime("%Y-%m"))
+        self.monthEdit.setPlaceholderText("例如: 2024-03")
+        self.viewLayout.addWidget(self.monthLabel)
+        self.viewLayout.addWidget(self.monthEdit)
+        self.viewLayout.addSpacing(12)
+        
+        # 客户
+        self.custLabel = StrongBodyLabel("客户名称", self)
+        self.custEdit = LineEdit(self)
+        self.custEdit.setPlaceholderText("例如: BMW, Tesla")
+        self.viewLayout.addWidget(self.custLabel)
+        self.viewLayout.addWidget(self.custEdit)
+        self.viewLayout.addSpacing(12)
+        
+        # 项目名称
+        self.nameLabel = StrongBodyLabel("项目名称", self)
+        self.nameEdit = LineEdit(self)
+        self.nameEdit.setPlaceholderText("输入项目名称")
+        self.viewLayout.addWidget(self.nameLabel)
+        self.viewLayout.addWidget(self.nameEdit)
+        self.viewLayout.addSpacing(12)
+        
+        # 标签
+        self.tagsLabel = StrongBodyLabel("标签 (可选)", self)
+        self.tagsEdit = LineEdit(self)
+        self.tagsEdit.setPlaceholderText("用逗号分隔，如: 压铸, 模具")
+        self.viewLayout.addWidget(self.tagsLabel)
+        self.viewLayout.addWidget(self.tagsEdit)
+        
+        # 调整按钮文字
+        self.yesButton.setText("创建项目")
+        self.cancelButton.setText("取消")
+        
+        # 简单的验证逻辑
+        self.widget.setMinimumWidth(360)
+        self.yesButton.setDisabled(True)
+        self.custEdit.textChanged.connect(self._validate)
+        self.nameEdit.textChanged.connect(self._validate)
+        self.monthEdit.textChanged.connect(self._validate)
+
+    def _validate(self):
+        valid = bool(self.custEdit.text().strip() and 
+                     self.nameEdit.text().strip() and 
+                     self.monthEdit.text().strip())
+        self.yesButton.setDisabled(not valid)
 
     def build_request(self):
         from dcpm.services.project_service import CreateProjectRequest
         return CreateProjectRequest(
-            month=self.month.text(),
-            customer=self.cust.text(),
-            name=self.name.text(),
-            tags=self.tags.text().split(",")
+            month=self.monthEdit.text(),
+            customer=self.custEdit.text(),
+            name=self.nameEdit.text(),
+            tags=self.tagsEdit.text().split(",")
         )
 
 class _ManageProjectDialog(QDialog):
@@ -518,21 +564,21 @@ class _ManageProjectDialog(QDialog):
         self.setStyleSheet(f"background: {COLORS['card']};")
         layout = QVBoxLayout(self)
         
-        self.status = QComboBox()
-        self.status.addItems(["ongoing", "delivered", "archived"])
-        self.status.setCurrentText(entry.project.status)
+        self._status_combo = QComboBox()
+        self._status_combo.addItems(["ongoing", "delivered", "archived"])
+        self._status_combo.setCurrentText(entry.project.status)
         
-        self.pinned = QCheckBox("置顶")
-        self.pinned.setChecked(entry.pinned)
+        self._pinned_check = QCheckBox("置顶")
+        self._pinned_check.setChecked(entry.pinned)
         
-        self.tags = QLineEdit(",".join(entry.project.tags))
-        self.desc = QPlainTextEdit(entry.project.description)
+        self._tags_edit = QLineEdit(",".join(entry.project.tags))
+        self._desc_edit = QPlainTextEdit(entry.project.description)
         
         form = QFormLayout()
-        form.addRow("状态", self.status)
-        form.addRow("", self.pinned)
-        form.addRow("标签", self.tags)
-        form.addRow("备注", self.desc)
+        form.addRow("状态", self._status_combo)
+        form.addRow("", self._pinned_check)
+        form.addRow("标签", self._tags_edit)
+        form.addRow("备注", self._desc_edit)
         layout.addLayout(form)
         
         ok = QPushButton("保存")
@@ -540,10 +586,10 @@ class _ManageProjectDialog(QDialog):
         layout.addWidget(ok)
     
     @property
-    def status(self): return self.status.currentText()
+    def status(self): return self._status_combo.currentText()
     @property
-    def pinned(self): return self.pinned.isChecked()
+    def is_pinned(self): return self._pinned_check.isChecked()
     @property
-    def tags(self): return self.tags.text().split(",")
+    def tags_list(self): return self._tags_edit.text().split(",")
     @property
-    def description(self): return self.desc.toPlainText()
+    def description(self): return self._desc_edit.toPlainText()

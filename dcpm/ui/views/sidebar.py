@@ -167,19 +167,37 @@ class SidebarWidget(QWidget):
         layout.addWidget(user_card)
 
     def _on_nav_clicked(self, sender: QPushButton, key: str):
+        # 清理无效的按钮引用
+        self.nav_group = [btn for btn in self.nav_group if not self._is_deleted(btn)]
+        
         for btn in self.nav_group:
-            btn.setChecked(btn == sender)
+            try:
+                btn.setChecked(btn == sender)
+            except RuntimeError:
+                pass # 忽略已删除的对象
         self.navChanged.emit(key)
+
+    def _is_deleted(self, obj) -> bool:
+        try:
+            # 尝试访问一个属性来检测对象是否已被删除
+            _ = obj.objectName()
+            return False
+        except RuntimeError:
+            return True
 
     def update_months(self, months: list[tuple[str, str, int]]):
         # months: [(display_name, key, count), ...]
         # 清除旧的月份按钮
         while self.month_container.count():
             item = self.month_container.takeAt(0)
-            if item.widget():
-                if item.widget() in self.nav_group:
-                    self.nav_group.remove(item.widget())
-                item.widget().deleteLater()
+            widget = item.widget()
+            if widget:
+                # 尝试获取绑定的按钮引用并移除
+                if hasattr(widget, "_nav_btn") and widget._nav_btn in self.nav_group:
+                    self.nav_group.remove(widget._nav_btn)
+                elif widget in self.nav_group: # 兼容旧逻辑
+                     self.nav_group.remove(widget)
+                widget.deleteLater()
         
         for name, key, count in months[:5]: # 只显示前5个月
             btn_widget = QWidget()
@@ -212,10 +230,16 @@ class SidebarWidget(QWidget):
                     font-weight: bold;
                 }}
             """)
-            btn.clicked.connect(lambda _, b=btn, k=key: self._on_nav_clicked(b, k))
+            
+            # 使用默认参数捕获循环变量
+            btn.clicked.connect(lambda checked, b=btn, k=key: self._on_nav_clicked(b, k))
+            
             self.nav_group.append(btn)
             btn_layout.addWidget(btn, stretch=1)
             
+            # 绑定引用，便于清理
+            btn_widget._nav_btn = btn
+
             # 数量徽章
             if count > 0:
                 badge = QLabel(str(count))
