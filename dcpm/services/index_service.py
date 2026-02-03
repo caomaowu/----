@@ -20,6 +20,7 @@ from dcpm.infra.db.index_db import (
     search_project_ids,
     set_project_pinned,
     upsert_project,
+    delete_project,
 )
 from dcpm.services.library_service import ProjectEntry, list_projects
 
@@ -38,6 +39,15 @@ class DashboardStats:
     new_this_month: int
     popular_tags: list[tuple[str, int]]
     month_counts: list[tuple[str, int]]
+
+
+def delete_project_index(library_root: Path, project_id: str) -> None:
+    db = open_index_db(library_root)
+    conn = connect(db)
+    try:
+        delete_project(conn, project_id)
+    finally:
+        conn.close()
 
 
 def get_dashboard_stats(library_root: Path) -> DashboardStats:

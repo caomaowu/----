@@ -85,13 +85,31 @@ def create_project(library_root: Path, req: CreateProjectRequest) -> CreateProje
     layout.project_dir.mkdir(parents=True, exist_ok=False)
     create_project_folders(layout.project_dir)
 
+    # Calculate create_time based on req.month
+    # If req.month is current month, use now() to preserve time
+    # If req.month is past/future, use that month's date (with current time or default)
+    now = datetime.now()
+    if now.strftime("%Y-%m") == req.month:
+        create_time = now
+    else:
+        # Use the 1st day of the requested month, but keep current time
+        # Or just use the 1st day at 09:00? Let's use current time but on that month's 1st day
+        # to ensure file system sorting or just being safe.
+        # Actually, let's just make sure year/month match.
+        try:
+            target_date = datetime(year, month, 1, now.hour, now.minute, now.second)
+            # If target day doesn't exist (e.g. 31st), datetime handles it? No, we use day=1.
+            create_time = target_date
+        except ValueError:
+            create_time = datetime(year, month, 1)
+
     project = Project(
         id=project_id,
         name=req.name.strip(),
         customer=req.customer.strip(),
         customer_code=req.customer_code.strip() if req.customer_code else None,
         part_number=req.part_number.strip() if req.part_number else None,
-        create_time=datetime.now(),
+        create_time=create_time,
         status="ongoing",
         tags=[t for t in (x.strip() for x in req.tags) if t],
         description=req.description.strip() if req.description else None,
@@ -160,3 +178,12 @@ def unarchive_project(library_root: Path, project_dir: Path, status: str = "ongo
     shutil.move(str(src), str(dest))
     project = edit_project_metadata(dest, status=status)
     return CreateProjectResult(project=project, project_dir=dest)
+
+
+def delete_project_physically(project_dir: Path) -> None:
+    """物理删除项目文件夹"""
+    path = Path(project_dir)
+    if not path.exists():
+        return
+    # shutil.rmtree handles non-empty directories
+    shutil.rmtree(str(path))

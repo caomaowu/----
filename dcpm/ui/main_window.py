@@ -1,7 +1,7 @@
 from datetime import datetime
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtCore import Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices, QFont
 from PyQt6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QFrame,
@@ -111,12 +111,12 @@ class MainWindow(QMainWindow):
         header_layout.addStretch()
 
         # View Switcher
-        self._view_switch = SegmentedWidget()
+        self._view_switch = Pivot()
         self._view_switch.addItem("grid", "⊞ 网格", lambda: self._on_view_changed("grid"))
         self._view_switch.addItem("list", "☰ 列表", lambda: self._on_view_changed("list"))
         self._view_switch.addItem("timeline", "◷ 时间线", lambda: self._on_view_changed("timeline"))
         self._view_switch.setCurrentItem("grid")
-        header_layout.addWidget(self._view_switch)
+        header_layout.addWidget(self._view_switch, 0, Qt.AlignmentFlag.AlignBottom) # Align to bottom to look good
 
         layout.addLayout(header_layout)
 
@@ -128,34 +128,37 @@ class MainWindow(QMainWindow):
             self._stats_layout.addWidget(StatCard("-", "0", "-", COLORS["secondary"], 0))
         layout.addLayout(self._stats_layout)
 
-        # Filter Bar (Visual only for now, logic via sidebar)
+        # Filter Bar
         filter_layout = QHBoxLayout()
         filter_layout.setSpacing(12)
 
-        btn_style = f"""
-            QPushButton {{
-                background-color: {COLORS['card']};
-                border: 1px solid {COLORS['border']};
-                border-radius: 10px;
-                padding: 0 16px;
-                color: {COLORS['text']};
-                font-size: 13px;
-            }}
-            QPushButton:hover {{
-                border-color: {COLORS['primary']};
-                color: {COLORS['primary']};
-            }}
-        """
+        # 状态筛选下拉
+        self._status_btn = DropDownPushButton("📁 全部状态", self)
+        self._status_btn.setFixedHeight(40)
+        status_menu = RoundMenu(parent=self._status_btn)
+        status_menu.addActions([
+            Action("全部状态", triggered=lambda: self._set_filter("status", "all")),
+            Action("进行中", triggered=lambda: self._set_filter("status", "ongoing")),
+            Action("已交付", triggered=lambda: self._set_filter("status", "delivered")),
+            Action("已归档", triggered=lambda: self._set_filter("status", "archived")),
+        ])
+        self._status_btn.setMenu(status_menu)
+        filter_layout.addWidget(self._status_btn)
 
-        self._filter_btns = []
-        for text in ["📁 全部状态", "📅 全部时间", "🏷️ 全部标签"]:
-            btn = QPushButton(text + " ▼")
-            btn.setFixedHeight(40)
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setStyleSheet(btn_style)
-            btn.clicked.connect(self._reset_filters)
-            filter_layout.addWidget(btn)
-            self._filter_btns.append(btn)
+        # 时间筛选下拉
+        self._time_btn = DropDownPushButton("📅 全部时间", self)
+        self._time_btn.setFixedHeight(40)
+        # 菜单内容在 _update_filter_menus 中动态生成
+        self._time_menu = RoundMenu(parent=self._time_btn)
+        self._time_btn.setMenu(self._time_menu)
+        filter_layout.addWidget(self._time_btn)
+
+        # 标签筛选下拉
+        self._tag_btn = DropDownPushButton("🏷️ 全部标签", self)
+        self._tag_btn.setFixedHeight(40)
+        self._tag_menu = RoundMenu(parent=self._tag_btn)
+        self._tag_btn.setMenu(self._tag_menu)
+        filter_layout.addWidget(self._tag_btn)
 
         filter_layout.addStretch()
         layout.addLayout(filter_layout)
@@ -246,60 +249,76 @@ class MainWindow(QMainWindow):
             # month is "YYYY-MM"
             display_months.append((month, f"month:{month}", count))
         self._sidebar.update_months(display_months)
+        
+        # Update Filter Menu (Time)
+        self._time_menu.clear()
+        self._time_menu.addAction(Action("全部时间", triggered=lambda: self._set_filter("time", "all")))
+        for month, count in stats.month_counts[:12]: # Show recent 12 months
+             self._time_menu.addAction(Action(f"{month} ({count})", triggered=lambda m=month: self._set_filter("time", m)))
 
-    def _update_right_panel_data(self, stats: DashboardStats):
-        # Tags
-        self._right_panel.update_tags(stats.popular_tags, set())
+        # Update Filter Menu (Tags)
+        self._tag_menu.clear()
+        self._tag_menu.addAction(Action("全部标签", triggered=lambda: self._set_filter("tag", "all")))
+        for tag, count in stats.popular_tags[:20]:
+            self._tag_menu.addAction(Action(f"{tag} ({count})", triggered=lambda t=tag: self._set_filter("tag", t)))
 
-        # Activities
-        try:
-            raw_acts = get_recent_activity(Path(self._library_root))
-            activities = []
-            for act in raw_acts:
-                # act: {id, name, customer, status, time}
-                name = act["name"]
-                time_str = datetime.fromisoformat(act["time"]).strftime("%m-%d %H:%M")
-                status = act["status"]
-                
-                color = COLORS["info"]
-                if status == "completed" or status == "delivered":
-                    color = COLORS["success"]
-                elif status == "archived":
-                    color = COLORS["secondary"]
-                
-                activities.append((f"操作了项目 {name}", time_str, color))
-            self._right_panel.update_activities(activities)
-        except Exception:
-            pass
+    def _set_filter(self, type_: str, value: str):
+        if type_ == "status":
+            self._status_filter = "all" if value == "all" else f"status:{value}"
+            self._status_btn.setText("📁 全部状态" if value == "all" else {
+                "ongoing": "📁 进行中", "delivered": "📁 已交付", "archived": "📁 已归档"
+            }.get(value, value))
+        elif type_ == "time":
+            self._time_filter = value
+            self._time_btn.setText("📅 全部时间" if value == "all" else f"📅 {value}")
+        elif type_ == "tag":
+            # For now single tag filter logic needs implementation in _apply_filter
+            # Currently _status_filter handles "status:" and "month:" prefix.
+            # Let's generalize.
+            self._tag_filter = value # We need to add this attribute
+            self._tag_btn.setText("🏷️ 全部标签" if value == "all" else f"🏷️ {value}")
+            
+        self._apply_filter()
 
     def _apply_filter(self) -> None:
         q = self._search_query.lower()
         filtered = []
 
         for entry in self._all_projects:
-            # 1. Status / Nav Filter
+            # 1. Status / Nav Filter (Sidebar logic)
             if self._status_filter != "all":
                 if self._status_filter == "pinned":
-                    if not entry.pinned:
-                        continue
+                    if not entry.pinned: continue
                 elif self._status_filter.startswith("status:"):
                     status = self._status_filter.split(":")[1]
-                    if entry.project.status != status:
-                        continue
+                    if entry.project.status != status: continue
                 elif self._status_filter.startswith("month:"):
                     month = self._status_filter.split(":")[1]
-                    if entry.project.create_time.strftime("%Y-%m") != month:
-                        continue
+                    if entry.project.create_time.strftime("%Y-%m") != month: continue
 
-            # 2. Search Query
+            # 2. Top Bar Filters (Time & Tag)
+            if self._time_filter != "all":
+                 if entry.project.create_time.strftime("%Y-%m") != self._time_filter:
+                     continue
+            
+            if hasattr(self, "_tag_filter") and self._tag_filter != "all":
+                if self._tag_filter not in entry.project.tags:
+                    continue
+
+            # 3. Search Query
             if q:
                 text = f"{entry.project.id} {entry.project.name} {entry.project.customer} {' '.join(entry.project.tags)}".lower()
                 if q not in text:
                     continue
 
-            # 3. Archive Hiding (default hidden unless viewing archived)
-            if entry.project.status == "archived" and self._status_filter != "status:archived":
-                continue
+            # 4. Archive Hiding (default hidden unless viewing archived)
+            # If user explicitly selected archived via status filter, show it.
+            # If user selected a specific time/tag, maybe show archived? 
+            # Let's keep simple: if not explicitly asking for archived status, hide archived projects.
+            if entry.project.status == "archived":
+                # Show if status filter is explicitly archived
+                if self._status_filter != "status:archived":
+                     continue
 
             filtered.append(entry)
 
@@ -324,6 +343,7 @@ class MainWindow(QMainWindow):
                 card.openRequested.connect(self._open_project)
                 card.pinToggled.connect(self._pin_project)
                 card.manageRequested.connect(self._manage_project)
+                card.deleteRequested.connect(self._prompt_delete_project)
                 layout.addWidget(card, idx // cols, idx % cols)
             # 底部弹簧，确保内容靠上
             layout.setRowStretch((len(self._filtered_projects) // cols) + 1, 1)
@@ -337,6 +357,7 @@ class MainWindow(QMainWindow):
                 card.openRequested.connect(self._open_project)
                 card.pinToggled.connect(self._pin_project)
                 card.manageRequested.connect(self._manage_project)
+                card.deleteRequested.connect(self._prompt_delete_project)
                 layout.addWidget(card)
             layout.addStretch()
             
@@ -358,6 +379,7 @@ class MainWindow(QMainWindow):
                     card.openRequested.connect(self._open_project)
                     card.pinToggled.connect(self._pin_project)
                     card.manageRequested.connect(self._manage_project)
+                    card.deleteRequested.connect(self._prompt_delete_project)
                     layout.addWidget(card)
             layout.addStretch()
 
@@ -423,13 +445,37 @@ class MainWindow(QMainWindow):
             db = rebuild_index(Path(self._library_root), include_archived=True)
             self._update_index_status(db.fts5_enabled)
             self._reload_projects()
-            QMessageBox.information(self, "成功", "索引重建完成")
+            InfoBar.success(
+                title='索引重建完成',
+                content="本地索引数据库已成功更新",
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=2000,
+                parent=self
+            )
         except Exception as e:
-            QMessageBox.critical(self, "失败", str(e))
+            InfoBar.error(
+                title='失败',
+                content=str(e),
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=3000,
+                parent=self
+            )
 
     def _open_create_project(self):
         if not self._library_root:
-            QMessageBox.warning(self, "提示", "请先在右侧选择库")
+            InfoBar.warning(
+                title='提示',
+                content="请先在右侧选择库",
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=2000,
+                parent=self
+            )
             return
         dlg = _CreateProjectDialog(self)
         if dlg.exec(): # MessageBoxBase uses standard exec but returns boolean or result, checking standard way
@@ -440,7 +486,15 @@ class MainWindow(QMainWindow):
                 except: pass
                 self._reload_projects()
             except Exception as e:
-                QMessageBox.critical(self, "错误", str(e))
+                InfoBar.error(
+                    title='错误',
+                    content=str(e),
+                    orient=Qt.Orientation.Horizontal,
+                    isClosable=True,
+                    position=InfoBarPosition.TOP,
+                    duration=3000,
+                    parent=self
+                )
 
     def _open_project(self, entry: ProjectEntry):
         if not self._library_root: return
@@ -456,6 +510,14 @@ class MainWindow(QMainWindow):
 
     def _manage_project(self, entry: ProjectEntry):
         dlg = _ManageProjectDialog(entry, self)
+        
+        # 处理删除逻辑 - 现在复用 self._prompt_delete_project
+        def _on_delete():
+            if self._prompt_delete_project(entry):
+                dlg.reject() # 如果删除成功，关闭弹窗
+
+        dlg.deleteRequested.connect(_on_delete)
+
         if dlg.exec() == QDialog.DialogCode.Accepted:
             try:
                 from dcpm.services.project_service import archive_project, unarchive_project, edit_project_metadata
@@ -479,13 +541,69 @@ class MainWindow(QMainWindow):
                     upsert_one_project(root, ProjectEntry(project=updated, project_dir=Path(entry.project_dir), pinned=dlg.is_pinned))
                 self._reload_projects()
             except Exception as e:
-                QMessageBox.critical(self, "错误", str(e))
+                InfoBar.error(
+                    title='错误',
+                    content=str(e),
+                    orient=Qt.Orientation.Horizontal,
+                    isClosable=True,
+                    position=InfoBarPosition.TOP,
+                    duration=3000,
+                    parent=self
+                )
+
+    def _prompt_delete_project(self, entry: ProjectEntry) -> bool:
+        """弹出删除确认框，如果确认则执行删除。返回 True 表示已删除。"""
+        title = "确认删除"
+        content = f"确定要彻底删除项目 {entry.project.name} 吗？\n\n此操作将永久删除项目文件夹及其所有内容，且不可恢复！"
+        w = MessageBoxBase(self)
+        w.titleLabel = SubtitleLabel(title, w)
+        w.viewLayout.addWidget(w.titleLabel)
+        w.viewLayout.addWidget(BodyLabel(content, w))
+        w.yesButton.setText("确认删除")
+        w.cancelButton.setText("取消")
+        w.yesButton.setStyleSheet("QPushButton { background-color: #dc2626; color: white; border: none; } QPushButton:hover { background-color: #b91c1c; }")
+        
+        if w.exec():
+            try:
+                from dcpm.services.project_service import delete_project_physically
+                from dcpm.services.index_service import delete_project_index
+                
+                # 1. 删除索引
+                delete_project_index(Path(self._library_root), entry.project.id)
+                # 2. 删除物理文件
+                delete_project_physically(entry.project_dir)
+                
+                self._reload_projects()
+                InfoBar.success(
+                    title='项目已删除',
+                    content=f"项目 {entry.project.name} 已彻底移除",
+                    orient=Qt.Orientation.Horizontal,
+                    isClosable=True,
+                    position=InfoBarPosition.TOP,
+                    duration=2000,
+                    parent=self
+                )
+                return True
+            except Exception as e:
+                InfoBar.error(
+                    title='删除失败',
+                    content=str(e),
+                    orient=Qt.Orientation.Horizontal,
+                    isClosable=True,
+                    position=InfoBarPosition.TOP,
+                    duration=3000,
+                    parent=self
+                )
+                return False
+        return False
 
 
 from qfluentwidgets import (
     BodyLabel, CardWidget, SegmentedWidget, SubtitleLabel,
     FluentIcon as FI, IconWidget, MessageBoxBase, LineEdit, 
-    StrongBodyLabel, PrimaryPushButton, PushButton
+    StrongBodyLabel, PrimaryPushButton, PushButton,
+    DropDownPushButton, RoundMenu, Action, InfoBar, InfoBarPosition,
+    Pivot
 )
 
 class _CreateProjectDialog(MessageBoxBase):
@@ -557,10 +675,12 @@ class _CreateProjectDialog(MessageBoxBase):
         )
 
 class _ManageProjectDialog(QDialog):
+    deleteRequested = pyqtSignal()
+
     def __init__(self, entry: ProjectEntry, parent=None):
         super().__init__(parent)
         self.setWindowTitle("管理项目")
-        self.setFixedSize(500, 400)
+        self.setFixedSize(500, 450) # Increased height
         self.setStyleSheet(f"background: {COLORS['card']};")
         layout = QVBoxLayout(self)
         
@@ -571,7 +691,8 @@ class _ManageProjectDialog(QDialog):
         self._pinned_check = QCheckBox("置顶")
         self._pinned_check.setChecked(entry.pinned)
         
-        self._tags_edit = QLineEdit(",".join(entry.project.tags))
+        self._tags_edit = LineEdit()
+        self._tags_edit.setText(",".join(entry.project.tags))
         self._desc_edit = QPlainTextEdit(entry.project.description)
         
         form = QFormLayout()
@@ -581,9 +702,35 @@ class _ManageProjectDialog(QDialog):
         form.addRow("备注", self._desc_edit)
         layout.addLayout(form)
         
-        ok = QPushButton("保存")
+        # Buttons Layout
+        btn_layout = QHBoxLayout()
+        
+        # Delete Button (Red)
+        del_btn = PushButton("🗑️ 删除项目")
+        del_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #fee2e2;
+                color: #dc2626;
+                border: 1px solid #fecaca;
+                border-radius: 6px;
+            }
+            QPushButton:hover {
+                background-color: #fecaca;
+            }
+            QPushButton:pressed {
+                background-color: #fca5a5;
+            }
+        """)
+        del_btn.clicked.connect(self.deleteRequested.emit)
+        btn_layout.addWidget(del_btn)
+        
+        btn_layout.addStretch()
+        
+        ok = PrimaryPushButton("保存")
         ok.clicked.connect(self.accept)
-        layout.addWidget(ok)
+        btn_layout.addWidget(ok)
+        
+        layout.addLayout(btn_layout)
     
     @property
     def status(self): return self._status_combo.currentText()

@@ -21,6 +21,7 @@ class ProjectCard(ShadowCard):
     openRequested = pyqtSignal(object)
     pinToggled = pyqtSignal(str, bool)
     manageRequested = pyqtSignal(object)
+    deleteRequested = pyqtSignal(object)
 
     def __init__(self, entry: ProjectEntry, options: ProjectCardOptions | None = None, parent: QWidget | None = None):
         super().__init__(parent)
@@ -122,6 +123,21 @@ class ProjectCard(ShadowCard):
         """)
         manage_btn.clicked.connect(lambda: self.manageRequested.emit(self._entry))
         top_layout.addWidget(manage_btn)
+        
+        # 删除按钮
+        del_btn = QPushButton()
+        del_btn.setIcon(FI.DELETE.icon())
+        del_btn.setFixedSize(28, 28)
+        del_btn.setToolTip("删除项目")
+        del_btn.setStyleSheet(f"""
+            QPushButton {{
+                border: none;
+                background: transparent;
+            }}
+            QPushButton:hover {{ background: #fee2e2; border-radius: 4px; }}
+        """)
+        del_btn.clicked.connect(lambda: self.deleteRequested.emit(self._entry))
+        top_layout.addWidget(del_btn)
         
         layout.addLayout(top_layout)
         

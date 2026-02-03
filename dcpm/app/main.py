@@ -1,7 +1,8 @@
 import sys
 import traceback
-from PyQt6.QtWidgets import QApplication, QMessageBox
-from qfluentwidgets import Theme, setTheme, setThemeColor
+from PyQt6.QtWidgets import QApplication
+from qfluentwidgets import Theme, setTheme, setThemeColor, InfoBar, InfoBarPosition
+from PyQt6.QtCore import Qt
 
 from dcpm.ui.main_window import MainWindow
 from dcpm.ui.theme.colors import PRIMARY_COLOR
@@ -12,7 +13,18 @@ def exception_hook(exctype, value, tb):
     print(traceback_str, file=sys.stderr)
     # 尝试弹窗显示错误（如果 QApplication 已创建）
     if QApplication.instance():
-        QMessageBox.critical(None, "Critical Error", f"An unhandled exception occurred:\n{value}\n\nSee console for details.")
+         # 尝试获取当前活动窗口作为父窗口
+        parent = QApplication.activeWindow()
+        if parent:
+             InfoBar.error(
+                title='Critical Error',
+                content=f"An unhandled exception occurred:\n{value}",
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=-1, # 不自动关闭
+                parent=parent
+            )
     sys.exit(1)
 
 
