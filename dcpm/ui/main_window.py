@@ -37,6 +37,9 @@ from dcpm.ui.views.sidebar import SidebarWidget
 from dcpm.ui.views.right_panel import RightPanel
 
 
+from dcpm.ui.components.note_dialog import NoteDialog
+from dcpm.services.note_service import NoteService
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -85,6 +88,9 @@ class MainWindow(QMainWindow):
         self._right_panel.actionTriggered.connect(self._on_action_triggered)
         self._right_panel.tagSelected.connect(self._on_tag_selected)
         layout.addWidget(self._right_panel)
+        
+        # Init Note Service if library root is available
+        self._note_service = NoteService(Path(self._library_root)) if self._library_root else None
 
         self._reload_projects()
 
@@ -183,7 +189,7 @@ class MainWindow(QMainWindow):
         self._stack.addWidget(container)
 
         # --- Page 2: File Browser ---
-        self._file_browser = FileBrowser()
+        self._file_browser = FileBrowser(self._library_root)
         self._file_browser.backRequested.connect(self._on_file_browser_back)
         self._stack.addWidget(self._file_browser)
 
@@ -381,6 +387,7 @@ class MainWindow(QMainWindow):
                 card.pinToggled.connect(self._pin_project)
                 card.manageRequested.connect(self._manage_project)
                 card.deleteRequested.connect(self._prompt_delete_project)
+                card.noteRequested.connect(self._open_project_note)
                 layout.addWidget(card, idx // cols, idx % cols)
             # 底部弹簧，确保内容靠上
             layout.setRowStretch((len(self._filtered_projects) // cols) + 1, 1)
@@ -594,6 +601,28 @@ class MainWindow(QMainWindow):
                     duration=3000,
                     parent=self
                 )
+
+    def _open_project_note(self, entry: ProjectEntry):
+        if not self._note_service:
+            return
+
+        project_dir = entry.project_dir
+        current_note = self._note_service.get_note(project_dir) or ""
+        
+        w = NoteDialog(f"项目留言: {entry.project.name}", current_note, self)
+        if w.exec():
+            text = w.get_text()
+            self._note_service.save_note(project_dir, text)
+            
+            InfoBar.success(
+                title='保存成功',
+                content="项目备注已更新",
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=2000,
+                parent=self
+            )
 
     def _prompt_delete_project(self, entry: ProjectEntry) -> bool:
         """弹出删除确认框，如果确认则执行删除。返回 True 表示已删除。"""

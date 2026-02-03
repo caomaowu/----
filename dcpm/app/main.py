@@ -1,14 +1,15 @@
+import os
 import sys
 import traceback
 from PyQt6.QtWidgets import QApplication
-from qfluentwidgets import Theme, setTheme, setThemeColor, InfoBar, InfoBarPosition
-from PyQt6.QtCore import Qt
 
-from dcpm.ui.main_window import MainWindow
 from dcpm.ui.theme.colors import PRIMARY_COLOR
 
 
 def exception_hook(exctype, value, tb):
+    from PyQt6.QtCore import Qt
+    from qfluentwidgets import InfoBar, InfoBarPosition
+
     traceback_str = "".join(traceback.format_exception(exctype, value, tb))
     print(traceback_str, file=sys.stderr)
     # 尝试弹窗显示错误（如果 QApplication 已创建）
@@ -35,7 +36,11 @@ def run(argv: list[str] | None = None) -> int:
         argv = sys.argv
     smoke = "--smoke" in argv
 
+    os.environ.setdefault("QT_API", "pyqt6")
     app = QApplication(argv)
+    from qfluentwidgets import Theme, setTheme, setThemeColor
+    from dcpm.ui.main_window import MainWindow
+
     setTheme(Theme.LIGHT)
     setThemeColor(PRIMARY_COLOR)
 

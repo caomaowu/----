@@ -73,6 +73,16 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         );
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS file_notes(
+            file_path TEXT PRIMARY KEY,
+            content TEXT NOT NULL,
+            create_time TEXT NOT NULL,
+            update_time TEXT NOT NULL
+        );
+        """
+    )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_files_project_id ON files(project_id);")
     _ensure_project_columns(conn)
 

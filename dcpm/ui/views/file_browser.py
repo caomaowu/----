@@ -17,6 +17,8 @@ from qfluentwidgets import (
 )
 
 from dcpm.ui.theme.colors import COLORS
+from dcpm.services.note_service import NoteService
+from dcpm.ui.components.note_dialog import NoteDialog
 
 class FileIconProvider(QFileSystemModel):
     """Custom FileSystemModel to provide better icons if needed, 
@@ -79,8 +81,9 @@ class FileItemDelegate(QStyledItemDelegate):
 class FileBrowser(QWidget):
     backRequested = pyqtSignal()
 
-    def __init__(self, parent=None):
+    def __init__(self, library_root: Path, parent=None):
         super().__init__(parent)
+        self.note_service = NoteService(library_root)
         self.setAcceptDrops(True) # Enable Drag & Drop
         self.current_root: Path | None = None
         
@@ -243,6 +246,7 @@ class FileBrowser(QWidget):
         
         # Signals
         self.list_view.doubleClicked.connect(self._on_item_double_clicked)
+        self.list_view.clicked.connect(self._on_item_clicked)
         self.list_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.list_view.customContextMenuRequested.connect(self._show_context_menu)
 
@@ -334,6 +338,32 @@ class FileBrowser(QWidget):
         idx = self.list_view.rootIndex()
         self.list_view.setRootIndex(idx)
 
+    def _enter_note(self, path: str):
+        current_note = self.note_service.get_note(path) or ""
+        
+        w = NoteDialog("留言", current_note, self.window())
+        if w.exec():
+            text = w.get_text()
+            self.note_service.save_note(path, text)
+            self._on_item_clicked(self.list_view.currentIndex())
+
+    def _on_item_clicked(self, index: QModelIndex):
+        if not index.isValid():
+            return
+        path = self.model.filePath(index)
+        note = self.note_service.get_note(path)
+        if note:
+             # Create custom info bar with styling to ensure visibility
+             InfoBar.info(
+                title='备注',
+                content=note,
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.BOTTOM_RIGHT,
+                duration=5000,
+                parent=self
+            )
+
     def _show_context_menu(self, pos: QPoint):
         index = self.list_view.indexAt(pos)
         menu = QMenu(self)
@@ -373,6 +403,13 @@ class FileBrowser(QWidget):
                 open_with_action.triggered.connect(lambda: subprocess.Popen(f'rundll32.exe shell32.dll,OpenAs_RunDLL {os.path.normpath(path)}', shell=True))
                 menu.addAction(open_with_action)
 
+            menu.addSeparator()
+
+            # Note Action
+            note_action = QAction(FluentIcon.CHAT.icon(), "进入留言", self)
+            note_action.triggered.connect(lambda: self._enter_note(path))
+            menu.addAction(note_action)
+            
             menu.addSeparator()
             
             # --- Edit Actions ---

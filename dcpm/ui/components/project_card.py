@@ -22,6 +22,7 @@ class ProjectCard(ShadowCard):
     pinToggled = pyqtSignal(str, bool)
     manageRequested = pyqtSignal(object)
     deleteRequested = pyqtSignal(object)
+    noteRequested = pyqtSignal(object)
 
     def __init__(self, entry: ProjectEntry, options: ProjectCardOptions | None = None, parent: QWidget | None = None):
         super().__init__(parent)
@@ -123,6 +124,21 @@ class ProjectCard(ShadowCard):
         """)
         manage_btn.clicked.connect(lambda: self.manageRequested.emit(self._entry))
         top_layout.addWidget(manage_btn)
+
+        # Note Button
+        note_btn = QPushButton()
+        note_btn.setIcon(FI.CHAT.icon())
+        note_btn.setFixedSize(28, 28)
+        note_btn.setToolTip("项目留言")
+        note_btn.setStyleSheet(f"""
+            QPushButton {{
+                border: none;
+                background: transparent;
+            }}
+            QPushButton:hover {{ background: {COLORS['bg']}; border-radius: 4px; }}
+        """)
+        note_btn.clicked.connect(lambda: self.noteRequested.emit(self._entry))
+        top_layout.addWidget(note_btn)
         
         # 删除按钮
         del_btn = QPushButton()
