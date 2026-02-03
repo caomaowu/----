@@ -6,7 +6,7 @@ from PyQt6.QtGui import QDesktopServices, QFont
 from PyQt6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QFrame,
     QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox,
-    QPlainTextEdit, QPushButton, QScrollArea, QVBoxLayout, QWidget
+    QPlainTextEdit, QPushButton, QScrollArea, QVBoxLayout, QWidget, QStackedWidget
 )
 from qfluentwidgets import (
     BodyLabel, CardWidget, SegmentedWidget, SubtitleLabel,
@@ -14,6 +14,7 @@ from qfluentwidgets import (
 )
 
 from dcpm.ui.theme.colors import APP_BG, COLORS
+from dcpm.ui.views.file_browser import FileBrowser
 from dcpm.infra.config.user_config import UserConfig, load_user_config, save_user_config
 from dcpm.services.project_service import (
     CreateProjectRequest, archive_project, create_project, edit_project_metadata,
@@ -88,6 +89,9 @@ class MainWindow(QMainWindow):
         self._reload_projects()
 
     def _build_main_content(self) -> QWidget:
+        self._stack = QStackedWidget()
+        
+        # --- Page 1: Project List ---
         container = QWidget()
         layout = QVBoxLayout(container)
         layout.setContentsMargins(32, 28, 32, 28)
@@ -176,7 +180,14 @@ class MainWindow(QMainWindow):
         self._scroll.setWidget(self._grid_container)
         layout.addWidget(self._scroll)
 
-        return container
+        self._stack.addWidget(container)
+
+        # --- Page 2: File Browser ---
+        self._file_browser = FileBrowser()
+        self._file_browser.backRequested.connect(self._on_file_browser_back)
+        self._stack.addWidget(self._file_browser)
+
+        return self._stack
 
     def _update_stats(self, stats: DashboardStats):
         # Clear old stats
@@ -526,8 +537,15 @@ class MainWindow(QMainWindow):
         if not self._library_root: return
         try: mark_opened_now(Path(self._library_root), entry.project.id)
         except: pass
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(entry.project_dir)))
+        
+        # Switch to File Browser view
+        self._file_browser.set_root(entry.project_dir, f"{entry.project.id} ({entry.project.name})")
+        self._stack.setCurrentIndex(1)
+        
         self._reload_projects()
+
+    def _on_file_browser_back(self):
+        self._stack.setCurrentIndex(0)
 
     def _pin_project(self, pid: str, pinned: bool):
         if not self._library_root: return
