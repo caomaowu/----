@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont, QCursor
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget, QSizePolicy
 from qfluentwidgets import IconWidget, FluentIcon as FI
 
 from dcpm.services.library_service import ProjectEntry
@@ -32,6 +32,7 @@ class ProjectCard(ShadowCard):
         # 基础样式
         self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self.setFixedHeight(180 if not self._options.compact else 80)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setStyleSheet(f"""
             ProjectCard {{
                 background-color: {COLORS['card']};
@@ -84,10 +85,12 @@ class ProjectCard(ShadowCard):
         meta_layout.setSpacing(2)
         
         code_label = QLabel(self._entry.project.id)
+        code_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         code_label.setStyleSheet(f"color: {COLORS['primary']}; font-size: 11px; font-weight: bold;")
         meta_layout.addWidget(code_label)
         
         cust_label = QLabel(self._entry.project.customer)
+        cust_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         cust_label.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 12px;")
         meta_layout.addWidget(cust_label)
         
@@ -162,6 +165,7 @@ class ProjectCard(ShadowCard):
         name_font = QFont("Segoe UI", 13, QFont.Weight.Bold)
         name_label.setFont(name_font)
         name_label.setWordWrap(True)
+        name_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         name_label.setStyleSheet(f"color: {COLORS['text']};")
         layout.addWidget(name_label)
         
@@ -187,6 +191,7 @@ class ProjectCard(ShadowCard):
         bottom_layout = QHBoxLayout()
         dt = self._entry.project.create_time.strftime("%Y-%m-%d")
         date_label = QLabel(dt)
+        date_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         date_label.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 11px;")
         bottom_layout.addWidget(date_label)
         
@@ -231,11 +236,13 @@ class ProjectCard(ShadowCard):
         info_layout.setSpacing(2)
         
         name_label = QLabel(self._entry.project.name)
+        name_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         name_label.setStyleSheet(f"font-weight: bold; font-size: 13px; color: {COLORS['text']};")
         info_layout.addWidget(name_label)
         
         meta = f"{self._entry.project.id} · {self._entry.project.customer}"
         meta_label = QLabel(meta)
+        meta_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         meta_label.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 11px;")
         info_layout.addWidget(meta_label)
         

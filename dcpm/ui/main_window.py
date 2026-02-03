@@ -1,7 +1,7 @@
 from datetime import datetime
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QUrl, pyqtSignal
+from PyQt6.QtCore import Qt, QUrl, pyqtSignal, QTimer, QEvent
 from PyQt6.QtGui import QDesktopServices, QFont
 from PyQt6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QFrame,
@@ -94,6 +94,18 @@ class MainWindow(QMainWindow):
 
         self._reload_projects()
 
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() != QEvent.Type.WindowStateChange:
+            return
+        if getattr(self, "_view_mode", None) != "grid":
+            return
+        if not hasattr(self, "_stack"):
+            return
+        if self._stack.currentIndex() != 0:
+            return
+        QTimer.singleShot(0, self._rebuild_grid)
+
     def _build_main_content(self) -> QWidget:
         self._stack = QStackedWidget()
         
@@ -178,6 +190,7 @@ class MainWindow(QMainWindow):
         self._scroll.setWidgetResizable(True)
         self._scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._scroll.setStyleSheet("background: transparent;")
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
         self._grid_container = QWidget()
         # 初始给一个空 layout，防止 _rebuild_grid 前的空白期
@@ -381,6 +394,9 @@ class MainWindow(QMainWindow):
             layout.setContentsMargins(0, 0, 0, 0) # 避免双重 padding
             layout.setSpacing(24)
             cols = 3
+            layout.setColumnStretch(0, 1)
+            layout.setColumnStretch(1, 1)
+            layout.setColumnStretch(2, 1)
             for idx, entry in enumerate(self._filtered_projects):
                 card = ProjectCard(entry, parent=new_container)
                 card.openRequested.connect(self._open_project)

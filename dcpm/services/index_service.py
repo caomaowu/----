@@ -187,6 +187,20 @@ def search(library_root: Path, query: str, limit: int = 200, include_archived: b
     try:
         ids = search_project_ids(conn, query, limit, db.fts5_enabled, include_archived=include_archived)
         rows = fetch_projects_by_ids(conn, ids)
+        stale_ids: list[str] = []
+        kept_rows: list[dict] = []
+        for row in rows:
+            project_dir = Path(str(row["project_dir"]))
+            meta_path = project_dir / ".project.json"
+            if (not project_dir.exists()) or (not meta_path.exists()):
+                stale_ids.append(str(row["id"]))
+                continue
+            kept_rows.append(row)
+
+        if stale_ids:
+            for project_id in stale_ids:
+                delete_project(conn, project_id)
+            rows = kept_rows
     finally:
         conn.close()
 
