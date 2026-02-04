@@ -97,6 +97,24 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_files_project_id ON files(project_id);")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_item_tags_project_id ON item_tags(project_id);")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS external_resources(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id TEXT NOT NULL,
+            resource_type TEXT NOT NULL,
+            root_path TEXT NOT NULL,
+            folder_year INTEGER NOT NULL,
+            folder_date TEXT NOT NULL,
+            folder_name TEXT NOT NULL,
+            full_path TEXT NOT NULL UNIQUE,
+            match_score INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_ext_res_project_id ON external_resources(project_id);")
     _ensure_project_columns(conn)
 
 
@@ -462,3 +480,60 @@ def _fts_query(q: str) -> str:
             continue
         tokens.append(f'"{t}"*')
     return " AND ".join(tokens) if tokens else q
+
+
+def upsert_external_resource(
+    conn: sqlite3.Connection,
+    *,
+    project_id: str,
+    resource_type: str,
+    root_path: str,
+    folder_year: int,
+    folder_date: str,
+    folder_name: str,
+    full_path: str,
+    match_score: int,
+    status: str,
+    created_at: str,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO external_resources(
+            project_id, resource_type, root_path, folder_year, folder_date,
+            folder_name, full_path, match_score, status, created_at
+        )
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(full_path) DO UPDATE SET
+            project_id=excluded.project_id,
+            match_score=excluded.match_score,
+            status=excluded.status;
+        """,
+        (
+            project_id, resource_type, root_path, folder_year, folder_date,
+            folder_name, full_path, match_score, status, created_at
+        ),
+    )
+
+
+def get_external_resources(conn: sqlite3.Connection, project_id: str) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT * FROM external_resources
+        WHERE project_id = ?
+        ORDER BY folder_date DESC;
+        """,
+        (project_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def update_external_resource_status(conn: sqlite3.Connection, resource_id: int, status: str) -> None:
+    conn.execute(
+        "UPDATE external_resources SET status = ? WHERE id = ?;",
+        (status, resource_id),
+    )
+
+
+def delete_external_resource(conn: sqlite3.Connection, resource_id: int) -> None:
+    conn.execute("DELETE FROM external_resources WHERE id = ?;", (resource_id,))
+

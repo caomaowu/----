@@ -123,6 +123,10 @@ class SidebarWidget(QWidget):
         layout.addLayout(self.month_container)
         
         layout.addStretch()
+
+        # Settings Button
+        settings_btn = create_nav_btn("⚙️   设置", "settings")
+        layout.addWidget(settings_btn)
         
         # 用户区域
         user_card = QWidget()

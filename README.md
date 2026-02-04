@@ -444,14 +444,39 @@ CREATE TABLE disabled_auto_tags(
 
 ---
 
-## 版本历史
+## 外部资源关联系统 (New)
 
-当前版本: **0.1.3** (2026-02-03)
+### 概述
+系统支持关联外部共享盘（NAS）中的探伤报告文件夹，通过智能扫描和模糊匹配算法，将散落在共享盘中的资源映射到本地项目。
 
-主要更新：
-- 沉浸式文件浏览器（拖放支持、右键菜单、快捷键）
-- 项目删除功能（物理删除 + 索引清理）
-- 高级筛选（状态、月份、标签）
-- 全局异常捕获机制
+### 核心流程
+1. **配置**: 在设置页配置共享盘根路径 (UNC Path)。
+2. **扫描**: `ScannerService` 遍历共享盘目录结构 (Year -> Batch -> Date -> Folder)。
+3. **匹配**: `SmartMatcher` 根据项目名称、Customer Code、Part Number 计算匹配分数。
+4. **展示**: 在项目详情页的“探伤记录” Tab 中以时间轴形式展示。
 
-详细变更见 `CHANGELOG.md`
+### 数据库表结构
+
+```sql
+CREATE TABLE external_resources(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id TEXT NOT NULL,
+    resource_type TEXT NOT NULL, -- 'inspection'
+    root_path TEXT NOT NULL,
+    folder_year INTEGER NOT NULL,
+    folder_date TEXT NOT NULL,
+    folder_name TEXT NOT NULL,
+    full_path TEXT NOT NULL UNIQUE,
+    match_score INTEGER NOT NULL,
+    status TEXT NOT NULL, -- 'pending', 'confirmed', 'ignored'
+    created_at TEXT NOT NULL
+);
+```
+
+### 关键组件
+- `services/scanner_service.py`: 扫描与匹配逻辑
+- `ui/views/inspection_timeline.py`: 时间轴 UI 组件
+- `ui/views/settings_interface.py`: 设置页面
+
+---
+

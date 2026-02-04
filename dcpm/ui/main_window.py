@@ -35,6 +35,7 @@ from dcpm.ui.components.project_card import ProjectCard, ProjectCardOptions
 from dcpm.ui.components.cards import StatCard
 from dcpm.ui.views.sidebar import SidebarWidget
 from dcpm.ui.views.right_panel import RightPanel
+from dcpm.ui.views.settings_interface import SettingsInterface
 
 
 from dcpm.ui.components.note_dialog import NoteDialog
@@ -205,6 +206,10 @@ class MainWindow(QMainWindow):
         self._file_browser = FileBrowser(self._library_root)
         self._file_browser.backRequested.connect(self._on_file_browser_back)
         self._stack.addWidget(self._file_browser)
+
+        # --- Page 3: Settings ---
+        self._settings_interface = SettingsInterface(self)
+        self._stack.addWidget(self._settings_interface)
 
         return self._stack
 
@@ -454,6 +459,18 @@ class MainWindow(QMainWindow):
     # --- Events ---
 
     def _on_nav_changed(self, key: str):
+        if key == "settings":
+            self._stack.setCurrentWidget(self._settings_interface)
+            self._title_label.setText("系统设置")
+            self._subtitle_label.setText("管理应用偏好和外部集成")
+            # Hide filter controls when in settings
+            # self._status_btn.setVisible(False) ... (Optional, but let's keep it simple for now)
+            return
+
+        # If coming back from settings or file browser, make sure we are on page 0
+        if self._stack.currentWidget() != self._stack.widget(0):
+            self._stack.setCurrentIndex(0)
+
         self._status_filter = key
         self._title_label.setText({
             "all": "全部项目",

@@ -9,17 +9,20 @@ from PyQt6.QtCore import Qt, pyqtSignal, QSize, QModelIndex, QPoint, QDir, QUrl,
 from PyQt6.QtGui import QDesktopServices, QAction, QCursor, QColor, QPainter, QFileSystemModel, QIcon, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QListView, QStyle, 
-    QStyledItemDelegate, QMenu, QApplication, QFrame, QLabel, QStyleOptionViewItem, QInputDialog, QMessageBox
+    QStyledItemDelegate, QMenu, QApplication, QFrame, QLabel, QStyleOptionViewItem, QInputDialog, QMessageBox,
+    QStackedWidget
 )
 from qfluentwidgets import (
     BreadcrumbBar, FluentIcon, TransparentToolButton, 
-    SearchLineEdit, Action, CommandBar, Flyout, FlyoutAnimationType, MessageBoxBase, SubtitleLabel, BodyLabel, InfoBar, InfoBarPosition, PlainTextEdit
+    SearchLineEdit, Action, CommandBar, Flyout, FlyoutAnimationType, MessageBoxBase, SubtitleLabel, BodyLabel, InfoBar, InfoBarPosition, PlainTextEdit,
+    Pivot
 )
 
 from dcpm.ui.theme.colors import COLORS
 from dcpm.services.note_service import NoteService
 from dcpm.services.tag_service import TagService
 from dcpm.ui.components.note_dialog import NoteDialog
+from dcpm.ui.views.inspection_timeline import InspectionTimeline
 
 class FileIconProvider(QFileSystemModel):
     """Custom FileSystemModel to provide better icons if needed, 
@@ -156,11 +159,13 @@ class FileBrowser(QWidget):
 
     def __init__(self, library_root: Path, parent=None):
         super().__init__(parent)
+        self.library_root = library_root
         self.note_service = NoteService(library_root)
         self.tag_service = TagService(library_root)
         self.setAcceptDrops(True) # Enable Drag & Drop
         self.current_root: Path | None = None
         self.project_root: Path | None = None
+        self.project_id: str = ""
         self._item_tags: dict[str, list[str]] = {}
         
         # Layout
@@ -171,8 +176,34 @@ class FileBrowser(QWidget):
         # Header
         self._init_header()
         
-        # File View
+        # Pivot (Tabs)
+        self.pivot = Pivot(self)
+        self.pivot.addItem("files", "项目文件")
+        self.pivot.addItem("inspection", "探伤记录")
+        self.pivot.currentItemChanged.connect(self._on_pivot_changed)
+        self._layout.addWidget(self.pivot)
+        
+        # Stacked Content
+        self.stack = QStackedWidget(self)
+        self._layout.addWidget(self.stack)
+        
+        # Page 0: File View
+        self.file_view_container = QWidget()
+        self.file_view_layout = QVBoxLayout(self.file_view_container)
+        self.file_view_layout.setContentsMargins(0, 0, 0, 0)
+        self.stack.addWidget(self.file_view_container)
+        
         self._init_file_view()
+        
+        # Page 1: Timeline (Placeholder)
+        self.timeline_view = QWidget()
+        self.stack.addWidget(self.timeline_view)
+
+    def _on_pivot_changed(self, key: str):
+        if key == "files":
+            self.stack.setCurrentIndex(0)
+        elif key == "inspection":
+            self.stack.setCurrentIndex(1)
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
@@ -326,7 +357,7 @@ class FileBrowser(QWidget):
         self.list_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.list_view.customContextMenuRequested.connect(self._show_context_menu)
 
-        self._layout.addWidget(self.list_view)
+        self.file_view_layout.addWidget(self.list_view)
 
     def set_root(self, path: Path, project_name: str = "", project_id: str = ""):
         """Entry point: Navigate to a project folder"""
@@ -336,6 +367,20 @@ class FileBrowser(QWidget):
         self.current_root = path
         self.project_root = path
         self.project_name = project_name
+        self.project_id = project_id
+        
+        # Reset Pivot
+        self.pivot.setCurrentItem("files")
+        
+        # Re-init timeline
+        if self.project_id:
+            old_widget = self.timeline_view
+            self.stack.removeWidget(old_widget)
+            old_widget.deleteLater()
+            
+            self.timeline_view = InspectionTimeline(self.library_root, self.project_id, self)
+            self.stack.addWidget(self.timeline_view)
+
         try:
             self._item_tags = self.tag_service.load_item_tags(path)
         except Exception:
