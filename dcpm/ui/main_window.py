@@ -1,8 +1,8 @@
 from datetime import datetime
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QUrl, pyqtSignal, QTimer, QEvent
-from PyQt6.QtGui import QDesktopServices, QFont
+from PyQt6.QtCore import Qt, QUrl, pyqtSignal, QTimer, QEvent, QRectF
+from PyQt6.QtGui import QDesktopServices, QFont, QPainter, QPainterPath, QPixmap
 from PyQt6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QFrame,
     QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox,
@@ -587,7 +587,13 @@ class MainWindow(QMainWindow):
 
         if dlg.exec() == QDialog.DialogCode.Accepted:
             try:
-                from dcpm.services.project_service import archive_project, unarchive_project, edit_project_metadata
+                from dcpm.services.project_service import (
+                    archive_project,
+                    clear_project_cover,
+                    edit_project_metadata,
+                    set_project_cover,
+                    unarchive_project,
+                )
                 
                 # Logic same as before
                 if dlg.is_pinned != entry.pinned:
@@ -597,15 +603,26 @@ class MainWindow(QMainWindow):
                 is_archived_dir = "归档项目" in Path(entry.project_dir).parts
                 root = Path(self._library_root)
                 
+                final_dir = Path(entry.project_dir)
+                final_project = entry.project
+
                 if desired == "archived" and not is_archived_dir:
                     res = archive_project(root, Path(entry.project_dir))
-                    upsert_one_project(root, ProjectEntry(project=res.project, project_dir=res.project_dir, pinned=dlg.is_pinned))
+                    final_dir = res.project_dir
+                    final_project = edit_project_metadata(final_dir, tags=dlg.tags_list, status=desired, description=dlg.description)
                 elif desired != "archived" and is_archived_dir:
                     res = unarchive_project(root, Path(entry.project_dir), status=desired)
-                    upsert_one_project(root, ProjectEntry(project=res.project, project_dir=res.project_dir, pinned=dlg.is_pinned))
+                    final_dir = res.project_dir
+                    final_project = edit_project_metadata(final_dir, tags=dlg.tags_list, status=desired, description=dlg.description)
                 else:
-                    updated = edit_project_metadata(Path(entry.project_dir), tags=dlg.tags_list, status=desired, description=dlg.description)
-                    upsert_one_project(root, ProjectEntry(project=updated, project_dir=Path(entry.project_dir), pinned=dlg.is_pinned))
+                    final_project = edit_project_metadata(final_dir, tags=dlg.tags_list, status=desired, description=dlg.description)
+
+                if dlg.cover_cleared:
+                    final_project = clear_project_cover(final_dir)
+                elif dlg.cover_source_path:
+                    final_project = set_project_cover(final_dir, dlg.cover_source_path)
+
+                upsert_one_project(root, ProjectEntry(project=final_project, project_dir=final_dir, pinned=dlg.is_pinned))
                 self._reload_projects()
             except Exception as e:
                 InfoBar.error(
@@ -782,11 +799,40 @@ class _ManageProjectDialog(QDialog):
         
         self._tags_edit = LineEdit()
         self._tags_edit.setText(",".join(entry.project.tags))
-        self._desc_edit = QPlainTextEdit(entry.project.description)
+        self._desc_edit = QPlainTextEdit(entry.project.description or "")
+
+        self._cover_source_path: str | None = None
+        self._cover_cleared = False
+        self._cover_preview = QLabel()
+        self._cover_preview.setFixedSize(180, 100)
+        self._cover_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._cover_preview.setStyleSheet(
+            f"background: {COLORS['bg']}; border: 1px solid {COLORS['border']}; border-radius: 10px;"
+        )
+        self._cover_preview.setText("无封面")
+        self._apply_existing_cover(entry)
+        cover_pick_btn = PushButton("选择图片…")
+        cover_pick_btn.clicked.connect(self._pick_cover)
+        cover_clear_btn = PushButton("清除封面")
+        cover_clear_btn.clicked.connect(self._clear_cover)
+
+        cover_widget = QWidget()
+        cover_layout = QHBoxLayout(cover_widget)
+        cover_layout.setContentsMargins(0, 0, 0, 0)
+        cover_layout.setSpacing(12)
+        cover_layout.addWidget(self._cover_preview)
+        cover_btn_col = QVBoxLayout()
+        cover_btn_col.setContentsMargins(0, 0, 0, 0)
+        cover_btn_col.setSpacing(8)
+        cover_btn_col.addWidget(cover_pick_btn)
+        cover_btn_col.addWidget(cover_clear_btn)
+        cover_btn_col.addStretch()
+        cover_layout.addLayout(cover_btn_col)
         
         form = QFormLayout()
         form.addRow("状态", self._status_combo)
         form.addRow("", self._pinned_check)
+        form.addRow("封面", cover_widget)
         form.addRow("标签", self._tags_edit)
         form.addRow("备注", self._desc_edit)
         layout.addLayout(form)
@@ -820,6 +866,66 @@ class _ManageProjectDialog(QDialog):
         btn_layout.addWidget(ok)
         
         layout.addLayout(btn_layout)
+
+    def _rounded_pixmap(self, pixmap: QPixmap, w: int, h: int, radius: int) -> QPixmap:
+        target = QPixmap(w, h)
+        target.fill(Qt.GlobalColor.transparent)
+
+        painter = QPainter(target)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(0, 0, w, h), radius, radius)
+        painter.setClipPath(path)
+
+        scaled = pixmap.scaled(
+            w,
+            h,
+            Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        x = int((w - scaled.width()) / 2)
+        y = int((h - scaled.height()) / 2)
+        painter.drawPixmap(x, y, scaled)
+        painter.end()
+        return target
+
+    def _set_cover_preview_from_file(self, file_path: str) -> None:
+        pix = QPixmap(file_path)
+        if pix.isNull():
+            self._cover_preview.setPixmap(QPixmap())
+            self._cover_preview.setText("无法预览")
+            return
+        self._cover_preview.setText("")
+        self._cover_preview.setPixmap(self._rounded_pixmap(pix, 180, 100, 10))
+
+    def _apply_existing_cover(self, entry: ProjectEntry) -> None:
+        cover = entry.project.cover_image
+        if not cover:
+            return
+        p = Path(cover)
+        if not p.is_absolute():
+            p = Path(entry.project_dir) / p
+        if p.exists() and p.is_file():
+            self._set_cover_preview_from_file(str(p))
+
+    def _pick_cover(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择封面图片",
+            "",
+            "Images (*.png *.jpg *.jpeg *.webp);;All Files (*.*)",
+        )
+        if not path:
+            return
+        self._cover_source_path = path
+        self._cover_cleared = False
+        self._set_cover_preview_from_file(path)
+
+    def _clear_cover(self) -> None:
+        self._cover_source_path = None
+        self._cover_cleared = True
+        self._cover_preview.setPixmap(QPixmap())
+        self._cover_preview.setText("无封面")
     
     @property
     def status(self): return self._status_combo.currentText()
@@ -829,3 +935,7 @@ class _ManageProjectDialog(QDialog):
     def tags_list(self): return self._tags_edit.text().split(",")
     @property
     def description(self): return self._desc_edit.toPlainText()
+    @property
+    def cover_source_path(self): return self._cover_source_path
+    @property
+    def cover_cleared(self): return self._cover_cleared

@@ -133,6 +133,68 @@ def edit_project_metadata(
     return update_project_metadata(meta_path, tags=tags, status=status, description=description)
 
 
+def set_project_cover(project_dir: Path, source_image_path: Path | str) -> Project:
+    project_dir = Path(project_dir)
+    meta_path = project_dir / ".project.json"
+    if not meta_path.exists():
+        raise FileNotFoundError(".project.json 不存在")
+
+    src = Path(source_image_path)
+    if not src.exists() or not src.is_file():
+        raise FileNotFoundError("封面图片文件不存在")
+
+    ext = src.suffix.lower()
+    allowed = {".png", ".jpg", ".jpeg", ".webp"}
+    if ext not in allowed:
+        raise ValueError("封面仅支持 png/jpg/jpeg/webp")
+
+    cover_dir = project_dir / ".pm_cover"
+    cover_dir.mkdir(parents=True, exist_ok=True)
+
+    for old in cover_dir.glob("cover.*"):
+        try:
+            old.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    dest = cover_dir / f"cover{ext}"
+    shutil.copy2(str(src), str(dest))
+
+    rel = Path(".pm_cover") / dest.name
+    return update_project_metadata(meta_path, cover_image=rel.as_posix())
+
+
+def clear_project_cover(project_dir: Path) -> Project:
+    project_dir = Path(project_dir)
+    meta_path = project_dir / ".project.json"
+    if not meta_path.exists():
+        raise FileNotFoundError(".project.json 不存在")
+
+    old = read_project_metadata(meta_path)
+    if old.cover_image:
+        path = Path(old.cover_image)
+        if not path.is_absolute():
+            path = project_dir / path
+        try:
+            path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    cover_dir = project_dir / ".pm_cover"
+    try:
+        if cover_dir.exists() and cover_dir.is_dir():
+            for p in cover_dir.glob("*"):
+                try:
+                    p.unlink(missing_ok=True)
+                except Exception:
+                    pass
+            cover_dir.rmdir()
+    except Exception:
+        pass
+
+    return update_project_metadata(meta_path, cover_image="")
+
+
 def archive_project(library_root: Path, project_dir: Path) -> CreateProjectResult:
     root = Path(library_root)
     src = Path(project_dir)

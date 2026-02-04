@@ -15,4 +15,4 @@ class Project:
     customer_code: str | None = None
     part_number: str | None = None
     description: str | None = None
-
+    cover_image: str | None = None

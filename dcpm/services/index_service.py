@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable
 
+from dcpm.infra.fs.metadata import read_project_metadata
 from dcpm.infra.db.index_db import (
     IndexDb,
     connect,
@@ -224,22 +225,26 @@ def search(library_root: Path, query: str, limit: int = 200, include_archived: b
                 last_open_time = datetime.fromisoformat(str(last_open_raw))
             except Exception:
                 last_open_time = None
+        project_dir = Path(str(row["project_dir"]))
+        meta_path = project_dir / ".project.json"
+        try:
+            p = read_project_metadata(meta_path)
+        except Exception:
+            from dcpm.domain.project import Project
 
-        from dcpm.domain.project import Project
-
-        p = Project(
-            id=str(row["id"]),
-            name=str(row["name"]),
-            customer=str(row["customer"]),
-            create_time=create_time,
-            status=str(row["status"]),
-            tags=[str(t) for t in tags],
-            description=row.get("description"),
-        )
+            p = Project(
+                id=str(row["id"]),
+                name=str(row["name"]),
+                customer=str(row["customer"]),
+                create_time=create_time,
+                status=str(row["status"]),
+                tags=[str(t) for t in tags],
+                description=row.get("description"),
+            )
         entries.append(
             ProjectEntry(
                 project=p,
-                project_dir=Path(str(row["project_dir"])),
+                project_dir=project_dir,
                 pinned=bool(row.get("pinned") or 0),
                 last_open_time=last_open_time,
                 open_count=int(row.get("open_count") or 0),

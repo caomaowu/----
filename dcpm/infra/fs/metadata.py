@@ -26,6 +26,9 @@ def read_project_metadata(path: Path) -> Project:
     tags = data.get("tags") or []
     if not isinstance(tags, list):
         tags = []
+    cover_image = data.get("cover_image")
+    if cover_image is not None:
+        cover_image = str(cover_image).strip() or None
     return Project(
         id=str(data["id"]),
         name=str(data["name"]),
@@ -36,6 +39,7 @@ def read_project_metadata(path: Path) -> Project:
         status=str(data.get("status") or "ongoing"),
         tags=[str(x) for x in tags],
         description=data.get("description"),
+        cover_image=cover_image,
     )
 
 
@@ -45,8 +49,12 @@ def update_project_metadata(
     tags: list[str] | None = None,
     status: str | None = None,
     description: str | None = None,
+    cover_image: str | None = None,
 ) -> Project:
     old = read_project_metadata(path)
+    cover_value = old.cover_image
+    if cover_image is not None:
+        cover_value = str(cover_image).strip() or None
     new = Project(
         id=old.id,
         name=old.name,
@@ -57,6 +65,7 @@ def update_project_metadata(
         status=status or old.status,
         tags=tags if tags is not None else old.tags,
         description=description if description is not None else old.description,
+        cover_image=cover_value,
     )
     write_project_metadata(path, new)
     return new
