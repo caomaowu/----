@@ -45,43 +45,79 @@ class InspectionScanner:
             except ValueError:
                 continue
 
-            # Level 2: Batch/Month
-            for batch_entry in os.scandir(year_entry.path):
-                if not batch_entry.is_dir():
-                    continue
-
-                # Level 3: Date (YYYY-MM-DD or MM-DD)
-                # Matches: 2025-11-05, 2025.11.05, 11-05, 11.05
-                for date_entry in os.scandir(batch_entry.path):
-                    if not date_entry.is_dir():
-                        continue
+            # Level 2: Recursively find potential resource folders
+            # Strategy:
+            # 1. Traverse down from Year folder
+            # 2. Treat ANY folder as a potential target
+            # 3. Infer date from folder name OR folder creation time
+            
+            for root, dirs, _ in os.walk(year_entry.path):
+                # Avoid going too deep (optional optimization)
+                # rel_depth = Path(root).relative_to(year_entry.path).parts
+                # if len(rel_depth) > 3: continue
+                
+                for dir_name in dirs:
+                    full_path = Path(root) / dir_name
                     
-                    date_str = self._extract_date(date_entry.name, year)
+                    # Try to extract date from the folder name itself first
+                    date_str = self._extract_date(dir_name, year)
+                    
+                    # If not in name, try to extract from parent folder name
                     if not date_str:
-                        continue
-
-                    # Level 4: Target Folders (Inspection packages)
-                    for target_entry in os.scandir(date_entry.path):
-                        if not target_entry.is_dir():
-                            continue
+                        parent_name = Path(root).name
+                        date_str = self._extract_date(parent_name, year)
                         
-                        yield ScanResult(
-                            folder_name=target_entry.name,
-                            full_path=target_entry.path,
-                            year=year,
-                            date_str=date_str,
-                        )
+                    # If still no date, fallback to folder modification time
+                    if not date_str:
+                        try:
+                            mtime = full_path.stat().st_mtime
+                            dt = datetime.fromtimestamp(mtime)
+                            if dt.year == year:
+                                date_str = dt.strftime("%Y-%m-%d")
+                            else:
+                                # If mod time year doesn't match parent year folder, 
+                                # we still use it but maybe flag it? For now just use it.
+                                date_str = dt.strftime("%Y-%m-%d")
+                        except OSError:
+                            date_str = f"{year}-01-01" # Ultimate fallback
+
+                    yield ScanResult(
+                        folder_name=dir_name,
+                        full_path=str(full_path),
+                        year=year,
+                        date_str=date_str,
+                    )
+                
+                # We don't need to os.walk too deep if we treat every folder as a candidate
+                # Actually, os.walk is good but might produce duplicates if we match parent AND child.
+                # Let's simplify: We only care about "leaf" nodes or nodes that contain files?
+                # No, a resource folder is just a folder.
+                # Problem: If we have Year/Date/Package, we will yield "Date" as a package, and "Package" as a package.
+                # "Date" folder (e.g. 2024-03-15) won't match any project name, so it's filtered out by Matcher (Score < 60).
+                # "Package" folder (e.g. E07-HL) WILL match.
+                # So it is safe to yield EVERYTHING.
+                pass
+
+    def _scan_targets(self, date_folder_path: str, year: int, date_str: str) -> Generator[ScanResult, None, None]:
+        # Deprecated by the new recursive scan logic, but kept if needed or removed.
+        # We replaced the logic in scan() directly.
+        pass
 
     def _extract_date(self, folder_name: str, year: int) -> str | None:
-        # Try full date: YYYY-MM-DD
-        m1 = re.search(r"(\d{4})[-.](\d{2})[-.](\d{2})", folder_name)
+        # 1. YYYY-MM-DD or YYYY.MM.DD or YYYY_MM_DD
+        m1 = re.search(r"(\d{4})[-._](\d{2})[-._](\d{2})", folder_name)
         if m1:
             return f"{m1.group(1)}-{m1.group(2)}-{m1.group(3)}"
         
-        # Try short date: MM-DD
-        m2 = re.search(r"(\d{2})[-.](\d{2})", folder_name)
+        # 2. YYYYMMDD (Pure digits, ensuring it looks like a date)
+        m2 = re.search(r"(202\d)(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])", folder_name)
         if m2:
-            return f"{year}-{m2.group(1)}-{m2.group(2)}"
+            return f"{m2.group(1)}-{m2.group(2)}-{m2.group(3)}"
+        
+        # 3. MM-DD or MM.DD (using parent year)
+        m3 = re.search(r"(0[1-9]|1[0-2])[-.](0[1-9]|[12]\d|3[01])", folder_name)
+        if m3:
+            return f"{year}-{m3.group(1)}-{m3.group(2)}"
             
         return None
 
@@ -98,6 +134,18 @@ class SmartMatcher:
         score = 0
         folder_lower = folder_name.lower()
 
+        # Rule 0: Exact Name Match (New High Priority)
+        # Normalize: remove spaces, dashes, underscores to match loosely
+        # e.g. "Project-Name" matches "ProjectName_Inspection"
+        def normalize(s):
+            return re.sub(r"[\s\-_]", "", s).lower()
+            
+        proj_norm = normalize(project.name)
+        folder_norm = normalize(folder_name)
+        
+        if proj_norm and proj_norm in folder_norm:
+             score = 60 # Base passing score
+
         # Rule 1: Strong Features (50 pts)
         if project.customer_code and project.customer_code.lower() in folder_lower:
             score += 50
@@ -105,15 +153,28 @@ class SmartMatcher:
         if project.part_number and project.part_number.lower() in folder_lower:
             score += 50
             
-        # Rule 2: Keywords (30 pts)
+        # Rule 2: Keywords Accumulation (Revised)
         # Split project name by common separators
+        # Ignore common stop words
+        STOP_WORDS = {"prj", "new", "old", "test", "2023", "2024", "2025", "project"}
         parts = re.split(r"[ _\-,]", project.name)
+        
+        keyword_score = 0
+        matched_keywords = set()
+        
         for part in parts:
-            if not part:
+            p = part.strip().lower()
+            if not p or len(p) < 2 or p in STOP_WORDS:
                 continue
-            if part.lower() in folder_lower:
-                score += 30
-                break # Count only once for name match
+            
+            # Check if keyword matches folder name
+            if p in folder_lower:
+                # Avoid double counting same keyword
+                if p not in matched_keywords:
+                    keyword_score += 30
+                    matched_keywords.add(p)
+        
+        score += keyword_score
 
         # Rule 3: Synonyms (20 pts)
         for key, values in self.SYNONYMS.items():
