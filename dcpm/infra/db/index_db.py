@@ -26,7 +26,7 @@ def open_index_db(library_root: Path) -> IndexDb:
         conn.execute("PRAGMA synchronous=NORMAL;")
         _ensure_schema(conn)
         fts5_enabled = _try_enable_fts5(conn)
-        conn.execute("PRAGMA user_version=1;")
+        conn.execute("PRAGMA user_version=2;")
         conn.commit()
     finally:
         conn.close()
@@ -83,7 +83,20 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         );
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS item_tags(
+            project_id TEXT NOT NULL,
+            rel_path TEXT NOT NULL,
+            tag TEXT NOT NULL,
+            is_dir INTEGER NOT NULL,
+            PRIMARY KEY(project_id, rel_path, tag),
+            FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+        );
+        """
+    )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_files_project_id ON files(project_id);")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_item_tags_project_id ON item_tags(project_id);")
     _ensure_project_columns(conn)
 
 
@@ -118,6 +131,16 @@ def _try_enable_fts5(conn: sqlite3.Connection) -> bool:
                 project_id UNINDEXED,
                 rel_path,
                 file_name,
+                tokenize = 'unicode61'
+            );
+            """
+        )
+        conn.execute(
+            """
+            CREATE VIRTUAL TABLE IF NOT EXISTS item_tag_fts USING fts5(
+                project_id UNINDEXED,
+                rel_path,
+                tag,
                 tokenize = 'unicode61'
             );
             """
@@ -194,6 +217,45 @@ def replace_project_files(
     )
 
 
+def replace_project_item_tags(
+    conn: sqlite3.Connection,
+    *,
+    project_id: str,
+    project_dir: str,
+    item_tags: dict[str, list[str]],
+    fts5_enabled: bool,
+) -> None:
+    conn.execute("DELETE FROM item_tags WHERE project_id = ?;", (project_id,))
+    rows: list[tuple[str, str, str, int]] = []
+    base = Path(project_dir)
+    for rel_path, tags in item_tags.items():
+        rel = str(rel_path).strip().replace("\\", "/").strip("/")
+        if not rel:
+            continue
+        is_dir = 1 if (base / rel).is_dir() else 0
+        for t in tags:
+            tag = str(t).strip()
+            if not tag:
+                continue
+            rows.append((project_id, rel, tag, is_dir))
+
+    if rows:
+        conn.executemany(
+            "INSERT INTO item_tags(project_id, rel_path, tag, is_dir) VALUES(?, ?, ?, ?);",
+            rows,
+        )
+
+    if not fts5_enabled:
+        return
+
+    conn.execute("DELETE FROM item_tag_fts WHERE project_id = ?;", (project_id,))
+    if rows:
+        conn.executemany(
+            "INSERT INTO item_tag_fts(project_id, rel_path, tag) VALUES(?, ?, ?);",
+            ((pid, rel, tag) for pid, rel, tag, _ in rows),
+        )
+
+
 def set_project_pinned(conn: sqlite3.Connection, project_id: str, pinned: bool) -> None:
     conn.execute("UPDATE projects SET pinned = ? WHERE id = ?;", (1 if pinned else 0, project_id))
 
@@ -243,6 +305,10 @@ def search_project_ids(
                 SELECT project_id, bm25(file_fts) AS score
                 FROM file_fts
                 WHERE file_fts MATCH ?
+                UNION ALL
+                SELECT project_id, bm25(item_tag_fts) AS score
+                FROM item_tag_fts
+                WHERE item_tag_fts MATCH ?
             ),
             best AS (
                 SELECT project_id, MIN(score) AS score
@@ -259,7 +325,7 @@ def search_project_ids(
                 datetime(COALESCE(p.last_open_time, p.create_time)) DESC
             LIMIT ?;
             """,
-            (_fts_query(q), _fts_query(q), 1 if include_archived else 0, limit),
+            (_fts_query(q), _fts_query(q), _fts_query(q), 1 if include_archived else 0, limit),
         ).fetchall()
         return [str(r["project_id"]) for r in rows]
 
@@ -269,6 +335,7 @@ def search_project_ids(
         SELECT p.id
         FROM projects p
         LEFT JOIN files f ON f.project_id = p.id
+        LEFT JOIN item_tags it ON it.project_id = p.id
         WHERE
             ((? = 1) OR p.status != 'archived')
             AND (
@@ -280,6 +347,8 @@ def search_project_ids(
             OR COALESCE(p.description, '') LIKE ?
             OR f.file_name LIKE ?
             OR f.rel_path LIKE ?
+            OR it.tag LIKE ?
+            OR it.rel_path LIKE ?
             )
         GROUP BY p.id
         ORDER BY
@@ -287,7 +356,7 @@ def search_project_ids(
             datetime(COALESCE(p.last_open_time, p.create_time)) DESC
         LIMIT ?;
         """,
-        (1 if include_archived else 0, like, like, like, like, like, like, like, like, limit),
+        (1 if include_archived else 0, like, like, like, like, like, like, like, like, like, like, limit),
     ).fetchall()
     return [str(r["id"]) for r in rows]
 
@@ -364,8 +433,9 @@ def delete_project(conn: sqlite3.Connection, project_id: str) -> None:
     # If not, we might leave ghosts. But 'rebuild_index' can fix it.
     # Let's try explicit delete from FTS just in case it's decoupled.
     try:
-        conn.execute("DELETE FROM projects_fts WHERE project_id = ?;", (project_id,))
-        conn.execute("DELETE FROM files_fts WHERE project_id = ?;", (project_id,))
+        conn.execute("DELETE FROM project_fts WHERE id = ?;", (project_id,))
+        conn.execute("DELETE FROM file_fts WHERE project_id = ?;", (project_id,))
+        conn.execute("DELETE FROM item_tag_fts WHERE project_id = ?;", (project_id,))
     except sqlite3.OperationalError:
         pass # Table might not exist or other config
     conn.commit()

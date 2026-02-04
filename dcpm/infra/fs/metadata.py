@@ -26,6 +26,17 @@ def read_project_metadata(path: Path) -> Project:
     tags = data.get("tags") or []
     if not isinstance(tags, list):
         tags = []
+    item_tags_raw = data.get("item_tags") or {}
+    item_tags: dict[str, list[str]] = {}
+    if isinstance(item_tags_raw, dict):
+        for k, v in item_tags_raw.items():
+            if not isinstance(k, str):
+                continue
+            if not isinstance(v, list):
+                continue
+            cleaned = [str(x).strip() for x in v if str(x).strip()]
+            if cleaned:
+                item_tags[k.strip().replace("\\", "/")] = cleaned
     cover_image = data.get("cover_image")
     if cover_image is not None:
         cover_image = str(cover_image).strip() or None
@@ -38,6 +49,7 @@ def read_project_metadata(path: Path) -> Project:
         create_time=create_time,
         status=str(data.get("status") or "ongoing"),
         tags=[str(x) for x in tags],
+        item_tags=item_tags,
         description=data.get("description"),
         cover_image=cover_image,
     )
@@ -47,6 +59,7 @@ def update_project_metadata(
     path: Path,
     *,
     tags: list[str] | None = None,
+    item_tags: dict[str, list[str]] | None = None,
     status: str | None = None,
     description: str | None = None,
     cover_image: str | None = None,
@@ -64,6 +77,7 @@ def update_project_metadata(
         create_time=old.create_time,
         status=status or old.status,
         tags=tags if tags is not None else old.tags,
+        item_tags=item_tags if item_tags is not None else old.item_tags,
         description=description if description is not None else old.description,
         cover_image=cover_value,
     )

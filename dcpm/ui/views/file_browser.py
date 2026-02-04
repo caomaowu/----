@@ -5,7 +5,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, pyqtSignal, QSize, QModelIndex, QPoint, QDir, QUrl, QMimeData
+from PyQt6.QtCore import Qt, pyqtSignal, QSize, QModelIndex, QPoint, QDir, QUrl, QMimeData, QRect
 from PyQt6.QtGui import QDesktopServices, QAction, QCursor, QColor, QPainter, QFileSystemModel, QIcon, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QListView, QStyle, 
@@ -13,11 +13,12 @@ from PyQt6.QtWidgets import (
 )
 from qfluentwidgets import (
     BreadcrumbBar, FluentIcon, TransparentToolButton, 
-    SearchLineEdit, Action, CommandBar, Flyout, FlyoutAnimationType, MessageBoxBase, SubtitleLabel, BodyLabel, InfoBar, InfoBarPosition
+    SearchLineEdit, Action, CommandBar, Flyout, FlyoutAnimationType, MessageBoxBase, SubtitleLabel, BodyLabel, InfoBar, InfoBarPosition, PlainTextEdit
 )
 
 from dcpm.ui.theme.colors import COLORS
 from dcpm.services.note_service import NoteService
+from dcpm.services.tag_service import TagService
 from dcpm.ui.components.note_dialog import NoteDialog
 
 class FileIconProvider(QFileSystemModel):
@@ -28,10 +29,11 @@ class FileIconProvider(QFileSystemModel):
 
 
 class FileItemDelegate(QStyledItemDelegate):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, tag_provider=None):
         super().__init__(parent)
         self.margins = 8
         self.icon_size = 48
+        self.tag_provider = tag_provider
         
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:
         return QSize(100, 130)  # Width, Height for grid items
@@ -74,8 +76,79 @@ class FileItemDelegate(QStyledItemDelegate):
         elided_text = fm.elidedText(name, Qt.TextElideMode.ElideMiddle, text_rect.width())
         
         painter.drawText(text_rect, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop, elided_text)
+
+        tags: list[str] = []
+        if callable(self.tag_provider):
+            try:
+                tags = list(self.tag_provider(index) or [])
+            except Exception:
+                tags = []
+
+        if tags:
+            tags = tags[:2]
+            more_count = 0
+            if callable(self.tag_provider):
+                try:
+                    all_tags = list(self.tag_provider(index) or [])
+                    more_count = max(0, len(all_tags) - len(tags))
+                except Exception:
+                    more_count = 0
+            if more_count > 0:
+                tags = tags + [f"+{more_count}"]
+
+            tag_font = option.font
+            if tag_font.pointSize() > 9:
+                tag_font.setPointSize(tag_font.pointSize() - 2)
+            painter.setFont(tag_font)
+            fm2 = painter.fontMetrics()
+
+            pad_x = 6
+            pad_y = 2
+            gap = 6
+            chip_h = fm2.height() + pad_y * 2
+            y = text_rect.y() + fm.height() + 6
+
+            widths = [fm2.horizontalAdvance(t) + pad_x * 2 for t in tags]
+            total_w = sum(widths) + gap * (len(widths) - 1)
+            x = rect.x() + max(0, (rect.width() - total_w) // 2)
+
+            bg = QColor(COLORS["primary"])
+            bg.setAlpha(26)
+            border = QColor(COLORS["primary"])
+            border.setAlpha(64)
+
+            for t, w in zip(tags, widths):
+                chip_rect = QRect(x, y, w, chip_h)
+                painter.setBrush(bg)
+                painter.setPen(border)
+                painter.drawRoundedRect(chip_rect, 8, 8)
+                painter.setPen(QColor(COLORS["primary"]))
+                painter.drawText(chip_rect, Qt.AlignmentFlag.AlignCenter, t)
+                x += w + gap
         
         painter.restore()
+
+
+class TagDialog(MessageBoxBase):
+    def __init__(self, title: str, content: str, parent=None):
+        super().__init__(parent)
+        self.titleLabel = SubtitleLabel(title, self)
+        self.textEdit = PlainTextEdit(self)
+        self.textEdit.setPlainText(content)
+        self.textEdit.setPlaceholderText("用逗号分隔标签，例如：第一版, 第二版, 常用")
+        self.textEdit.setMinimumHeight(120)
+        self.textEdit.setMinimumWidth(320)
+
+        self.viewLayout.addWidget(self.titleLabel)
+        self.viewLayout.addWidget(self.textEdit)
+
+        self.yesButton.setText("确定")
+        self.cancelButton.setText("取消")
+
+        self.widget.setMinimumWidth(360)
+
+    def get_text(self) -> str:
+        return self.textEdit.toPlainText()
 
 
 class FileBrowser(QWidget):
@@ -84,8 +157,11 @@ class FileBrowser(QWidget):
     def __init__(self, library_root: Path, parent=None):
         super().__init__(parent)
         self.note_service = NoteService(library_root)
+        self.tag_service = TagService(library_root)
         self.setAcceptDrops(True) # Enable Drag & Drop
         self.current_root: Path | None = None
+        self.project_root: Path | None = None
+        self._item_tags: dict[str, list[str]] = {}
         
         # Layout
         self._layout = QVBoxLayout(self)
@@ -241,7 +317,7 @@ class FileBrowser(QWidget):
         self.list_view.setDragDropMode(QListView.DragDropMode.DragOnly) # We handle drops manually on parent
         
         # Custom Delegate for Fluent Look
-        self.delegate = FileItemDelegate(self.list_view)
+        self.delegate = FileItemDelegate(self.list_view, self._get_tags_for_index)
         self.list_view.setItemDelegate(self.delegate)
         
         # Signals
@@ -252,19 +328,79 @@ class FileBrowser(QWidget):
 
         self._layout.addWidget(self.list_view)
 
-    def set_root(self, path: Path, project_name: str = ""):
+    def set_root(self, path: Path, project_name: str = "", project_id: str = ""):
         """Entry point: Navigate to a project folder"""
         if not path.exists():
             return
             
         self.current_root = path
+        self.project_root = path
         self.project_name = project_name
+        try:
+            self._item_tags = self.tag_service.load_item_tags(path)
+        except Exception:
+            self._item_tags = {}
         
         # Set model root path (needs to be set to load data)
         root_idx = self.model.setRootPath(str(path))
         self.list_view.setRootIndex(root_idx)
         
         self._update_breadcrumbs(path)
+        self.list_view.viewport().update()
+
+    def _rel_path_for_fs_path(self, fs_path: str) -> str:
+        if not self.project_root:
+            return ""
+        try:
+            rel = Path(fs_path).resolve().relative_to(self.project_root.resolve()).as_posix()
+        except Exception:
+            return ""
+        rel = rel.strip().replace("\\", "/")
+        if rel == ".":
+            return ""
+        return rel.strip("/")
+
+    def _get_tags_for_index(self, index: QModelIndex) -> list[str]:
+        if not index.isValid():
+            return []
+        p = self.model.filePath(index)
+        rel = self._rel_path_for_fs_path(p)
+        if not rel:
+            return []
+        return self._item_tags.get(rel, [])
+
+    def _edit_tags(self, fs_path: str):
+        if not self.project_root:
+            return
+        rel = self._rel_path_for_fs_path(fs_path)
+        if not rel:
+            return
+        current = self._item_tags.get(rel, [])
+        w = TagDialog("设置标签", ", ".join(current), self.window())
+        if w.exec():
+            tags = self.tag_service.parse_tags_text(w.get_text())
+            try:
+                self._item_tags = self.tag_service.set_item_tags(self.project_root, rel, tags)
+                self.list_view.viewport().update()
+                InfoBar.success(
+                    title="已保存",
+                    content="标签已更新",
+                    orient=Qt.Orientation.Horizontal,
+                    isClosable=True,
+                    position=InfoBarPosition.BOTTOM_RIGHT,
+                    duration=2000,
+                    parent=self,
+                )
+            except Exception as e:
+                InfoBar.error(
+                    title="保存失败",
+                    content=str(e),
+                    orient=Qt.Orientation.Horizontal,
+                    isClosable=True,
+                    position=InfoBarPosition.BOTTOM_RIGHT,
+                    duration=3000,
+                    parent=self,
+                )
 
     def _update_breadcrumbs(self, current_path: Path):
         """Rebuild breadcrumbs based on relative path from project root"""
@@ -409,6 +545,10 @@ class FileBrowser(QWidget):
             note_action = QAction(FluentIcon.CHAT.icon(), "进入留言", self)
             note_action.triggered.connect(lambda: self._enter_note(path))
             menu.addAction(note_action)
+
+            tag_action = QAction("设置标签", self)
+            tag_action.triggered.connect(lambda: self._edit_tags(path))
+            menu.addAction(tag_action)
             
             menu.addSeparator()
             
@@ -464,12 +604,20 @@ class FileBrowser(QWidget):
     def _rename_item(self, index: QModelIndex):
         old_name = self.model.fileName(index)
         old_path = Path(self.model.filePath(index))
+        old_rel = self._rel_path_for_fs_path(str(old_path))
         
         new_name, ok = QInputDialog.getText(self, "重命名", "请输入新名称:", text=old_name)
         if ok and new_name and new_name != old_name:
             new_path = old_path.parent / new_name
             try:
                 os.rename(old_path, new_path)
+                new_rel = self._rel_path_for_fs_path(str(new_path))
+                if self.project_root and old_rel and new_rel:
+                    try:
+                        self._item_tags = self.tag_service.move_item(self.project_root, old_rel, new_rel)
+                        self.list_view.viewport().update()
+                    except Exception:
+                        pass
             except Exception as e:
                 # Simple error handling
                 print(f"Rename failed: {e}")
@@ -477,6 +625,8 @@ class FileBrowser(QWidget):
     def _delete_item(self, index: QModelIndex):
         path = Path(self.model.filePath(index))
         name = path.name
+        rel = self._rel_path_for_fs_path(str(path))
+        is_dir = path.is_dir()
         
         # Confirm Dialog
         w = MessageBoxBase(self)
@@ -489,10 +639,16 @@ class FileBrowser(QWidget):
         
         if w.exec():
             try:
-                if path.is_dir():
+                if is_dir:
                     shutil.rmtree(path)
                 else:
                     os.remove(path)
+                if self.project_root and rel:
+                    try:
+                        self._item_tags = self.tag_service.delete_item(self.project_root, rel, is_dir=is_dir)
+                        self.list_view.viewport().update()
+                    except Exception:
+                        pass
             except Exception as e:
                 print(f"Delete failed: {e}")
 

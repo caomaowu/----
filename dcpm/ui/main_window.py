@@ -562,7 +562,7 @@ class MainWindow(QMainWindow):
         except: pass
         
         # Switch to File Browser view
-        self._file_browser.set_root(entry.project_dir, f"{entry.project.id} ({entry.project.name})")
+        self._file_browser.set_root(entry.project_dir, f"{entry.project.id} ({entry.project.name})", entry.project.id)
         self._stack.setCurrentIndex(1)
         
         self._reload_projects()

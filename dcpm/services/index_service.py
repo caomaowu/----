@@ -17,6 +17,7 @@ from dcpm.infra.db.index_db import (
     get_stats,
     mark_project_opened,
     open_index_db,
+    replace_project_item_tags,
     replace_project_files,
     search_project_ids,
     set_project_pinned,
@@ -126,6 +127,13 @@ def rebuild_index(library_root: Path, include_archived: bool = False) -> IndexDb
                 files=_scan_files(entry.project_dir),
                 fts5_enabled=db.fts5_enabled,
             )
+            replace_project_item_tags(
+                conn,
+                project_id=entry.project.id,
+                project_dir=str(entry.project_dir),
+                item_tags=entry.project.item_tags,
+                fts5_enabled=db.fts5_enabled,
+            )
         conn.commit()
     finally:
         conn.close()
@@ -154,6 +162,13 @@ def upsert_one_project(library_root: Path, entry: ProjectEntry) -> IndexDb:
             conn,
             project_id=entry.project.id,
             files=_scan_files(entry.project_dir),
+            fts5_enabled=db.fts5_enabled,
+        )
+        replace_project_item_tags(
+            conn,
+            project_id=entry.project.id,
+            project_dir=str(entry.project_dir),
+            item_tags=entry.project.item_tags,
             fts5_enabled=db.fts5_enabled,
         )
         conn.commit()
