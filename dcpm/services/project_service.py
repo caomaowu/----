@@ -121,16 +121,61 @@ def create_project(library_root: Path, req: CreateProjectRequest) -> CreateProje
 def edit_project_metadata(
     project_dir: Path,
     *,
+    name: str | None = None,
     tags: list[str] | None = None,
     status: str | None = None,
     description: str | None = None,
-) -> Project:
+) -> tuple[Project, Path]:
     meta_path = Path(project_dir) / ".project.json"
     if not meta_path.exists():
         raise FileNotFoundError(".project.json 不存在")
+    
+    # Try to rename folder if name changed
+    current_dir = Path(project_dir)
+    updated_project = read_project_metadata(meta_path)
+    
+    if name and name != updated_project.name:
+        # Calculate new folder name
+        # Format: {id}_{customer}_{name}
+        # We need to parse current folder name to keep ID and customer if not changing
+        # But actually, we should reconstruct from metadata to be safe
+        
+        # NOTE: This assumes folder name format is strict.
+        # But if user renamed manually, it might be different.
+        # Let's try to preserve ID and Customer from metadata.
+        
+        # New logic:
+        # 1. Sanitize new name
+        # 2. Construct new folder name
+        # 3. Try rename
+        
+        new_safe_name = sanitize_folder_component(name)
+        safe_customer = sanitize_folder_component(updated_project.customer)
+        
+        # ID is usually the first part of the folder name, or stored in metadata
+        # Let's trust metadata ID
+        pid = updated_project.id
+        
+        new_folder_name = f"{pid}_{safe_customer}_{new_safe_name}"
+        new_dir = current_dir.parent / new_folder_name
+        
+        if new_dir != current_dir:
+            try:
+                if not new_dir.exists():
+                    current_dir.rename(new_dir)
+                    # Update paths
+                    current_dir = new_dir
+                    meta_path = current_dir / ".project.json"
+            except OSError:
+                # Rename failed (locked, permission, etc.)
+                # We continue without renaming folder, but update metadata name
+                pass
+
     if tags is not None:
         tags = [t for t in (x.strip() for x in tags) if t]
-    return update_project_metadata(meta_path, tags=tags, status=status, description=description)
+        
+    p = update_project_metadata(meta_path, name=name, tags=tags, status=status, description=description)
+    return p, current_dir
 
 
 def set_project_cover(project_dir: Path, source_image_path: Path | str) -> Project:
@@ -214,7 +259,7 @@ def archive_project(library_root: Path, project_dir: Path) -> CreateProjectResul
             raise FileExistsError("归档目录下存在大量同名项目，无法归档")
 
     shutil.move(str(src), str(dest))
-    project = edit_project_metadata(dest, status="archived")
+    project, _ = edit_project_metadata(dest, status="archived")
     return CreateProjectResult(project=project, project_dir=dest)
 
 
@@ -238,7 +283,7 @@ def unarchive_project(library_root: Path, project_dir: Path, status: str = "ongo
             raise FileExistsError("目标月份目录下存在大量同名项目，无法取消归档")
 
     shutil.move(str(src), str(dest))
-    project = edit_project_metadata(dest, status=status)
+    project, _ = edit_project_metadata(dest, status=status)
     return CreateProjectResult(project=project, project_dir=dest)
 
 

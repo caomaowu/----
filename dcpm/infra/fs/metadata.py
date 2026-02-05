@@ -58,6 +58,7 @@ def read_project_metadata(path: Path) -> Project:
 def update_project_metadata(
     path: Path,
     *,
+    name: str | None = None,
     tags: list[str] | None = None,
     item_tags: dict[str, list[str]] | None = None,
     status: str | None = None,
@@ -70,7 +71,7 @@ def update_project_metadata(
         cover_value = str(cover_image).strip() or None
     new = Project(
         id=old.id,
-        name=old.name,
+        name=name if name is not None else old.name,
         customer=old.customer,
         customer_code=old.customer_code,
         part_number=old.part_number,

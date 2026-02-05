@@ -646,13 +646,13 @@ class MainWindow(QMainWindow):
                 if desired == "archived" and not is_archived_dir:
                     res = archive_project(root, Path(entry.project_dir))
                     final_dir = res.project_dir
-                    final_project = edit_project_metadata(final_dir, tags=dlg.tags_list, status=desired, description=dlg.description)
+                    final_project, final_dir = edit_project_metadata(final_dir, name=dlg.name, tags=dlg.tags_list, status=desired, description=dlg.description)
                 elif desired != "archived" and is_archived_dir:
                     res = unarchive_project(root, Path(entry.project_dir), status=desired)
                     final_dir = res.project_dir
-                    final_project = edit_project_metadata(final_dir, tags=dlg.tags_list, status=desired, description=dlg.description)
+                    final_project, final_dir = edit_project_metadata(final_dir, name=dlg.name, tags=dlg.tags_list, status=desired, description=dlg.description)
                 else:
-                    final_project = edit_project_metadata(final_dir, tags=dlg.tags_list, status=desired, description=dlg.description)
+                    final_project, final_dir = edit_project_metadata(final_dir, name=dlg.name, tags=dlg.tags_list, status=desired, description=dlg.description)
 
                 if dlg.cover_cleared:
                     final_project = clear_project_cover(final_dir)
@@ -661,6 +661,28 @@ class MainWindow(QMainWindow):
 
                 upsert_one_project(root, ProjectEntry(project=final_project, project_dir=final_dir, pinned=dlg.is_pinned))
                 self._reload_projects()
+                
+                # Check if core info changed to trigger incremental scan
+                core_changed = (
+                    final_project.name != entry.project.name or
+                    final_project.customer_code != entry.project.customer_code or
+                    final_project.part_number != entry.project.part_number
+                )
+                
+                if core_changed:
+                    # Trigger incremental scan to update matching scores
+                    from dcpm.ui.views.settings_interface import ScanThread
+                    from dcpm.infra.config.user_config import load_user_config
+                    
+                    cfg = load_user_config()
+                    if cfg.shared_drive_path:
+                        self._auto_scan_thread = ScanThread(
+                            Path(self._library_root), 
+                            cfg.shared_drive_path, 
+                            target_project=final_project
+                        )
+                        self._auto_scan_thread.start()
+                        
             except Exception as e:
                 InfoBar.error(
                     title='错误',
@@ -834,6 +856,9 @@ class _ManageProjectDialog(QDialog):
         self._pinned_check = QCheckBox("置顶")
         self._pinned_check.setChecked(entry.pinned)
         
+        self._name_edit = LineEdit()
+        self._name_edit.setText(entry.project.name)
+
         self._tags_edit = LineEdit()
         self._tags_edit.setText(",".join(entry.project.tags))
         self._desc_edit = QPlainTextEdit(entry.project.description or "")
@@ -867,6 +892,7 @@ class _ManageProjectDialog(QDialog):
         cover_layout.addLayout(cover_btn_col)
         
         form = QFormLayout()
+        form.addRow("名称", self._name_edit)
         form.addRow("状态", self._status_combo)
         form.addRow("", self._pinned_check)
         form.addRow("封面", cover_widget)
@@ -968,6 +994,8 @@ class _ManageProjectDialog(QDialog):
     def status(self): return self._status_combo.currentText()
     @property
     def is_pinned(self): return self._pinned_check.isChecked()
+    @property
+    def name(self): return self._name_edit.text().strip()
     @property
     def tags_list(self): return self._tags_edit.text().split(",")
     @property

@@ -231,6 +231,31 @@ def targeted_scan_and_link(library_root: Path, shared_drive_path: str, target_pr
     now_str = datetime.now().isoformat(timespec="seconds")
     
     try:
+        # Step 0: Cleanup existing pending resources for this project
+        # Because we are about to re-scan with new criteria (e.g. new project name),
+        # old pending matches might be invalid or have low scores now.
+        # We should check them against the new matcher rules.
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, folder_name FROM external_resources WHERE project_id = ? AND status = 'pending'", (target_project.id,))
+        pending_rows = cursor.fetchall()
+        
+        for row in pending_rows:
+            res_id, folder_name = row[0], row[1]
+            # Check if it still matches well
+            new_score = matcher.match(target_project, folder_name)
+            if new_score < 60:
+                # No longer matches -> mark ignored or delete?
+                # Let's mark as ignored so it doesn't show up.
+                update_external_resource_status(conn, res_id, "ignored")
+            else:
+                # Update score if changed?
+                # upsert_external_resource handles score updates if we re-scan it below.
+                # But here we just validate cleanup.
+                pass
+        
+        # Commit cleanup immediately to ensure it persists even if scanning fails later
+        conn.commit()
+
         # We still need to iterate folders, but we only check match against ONE project.
         # This is O(N) where N is number of folders.
         # Previously it was O(N * M) where M is number of projects.
