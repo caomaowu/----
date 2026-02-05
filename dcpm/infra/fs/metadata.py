@@ -64,6 +64,7 @@ def update_project_metadata(
     status: str | None = None,
     description: str | None = None,
     cover_image: str | None = None,
+    part_number: str | None = None,
 ) -> Project:
     old = read_project_metadata(path)
     cover_value = old.cover_image
@@ -74,7 +75,7 @@ def update_project_metadata(
         name=name if name is not None else old.name,
         customer=old.customer,
         customer_code=old.customer_code,
-        part_number=old.part_number,
+        part_number=part_number if part_number is not None else old.part_number,
         create_time=old.create_time,
         status=status or old.status,
         tags=tags if tags is not None else old.tags,

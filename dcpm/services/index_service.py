@@ -119,6 +119,7 @@ def rebuild_index(library_root: Path, include_archived: bool = False) -> IndexDb
                 month=entry.project.create_time.strftime("%Y-%m"),
                 project_dir=str(entry.project_dir),
                 description=entry.project.description,
+                part_number=entry.project.part_number,
                 fts5_enabled=db.fts5_enabled,
             )
             replace_project_files(
@@ -156,6 +157,7 @@ def upsert_one_project(library_root: Path, entry: ProjectEntry) -> IndexDb:
             month=entry.project.create_time.strftime("%Y-%m"),
             project_dir=str(entry.project_dir),
             description=entry.project.description,
+            part_number=entry.project.part_number,
             fts5_enabled=db.fts5_enabled,
         )
         replace_project_files(

@@ -44,3 +44,4 @@ Thumbs.db
 # User Configuration (if local)
 config.json
 user_config.json
+.trae/

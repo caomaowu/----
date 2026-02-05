@@ -10,6 +10,7 @@ from dcpm.domain.project import Project
 from dcpm.domain.rules import ProjectId, month_dir_from_project_id, parse_month, sanitize_folder_component
 from dcpm.infra.fs.layout import build_layout, create_project_folders, ensure_pm_system
 from dcpm.infra.fs.metadata import read_project_metadata, update_project_metadata, write_project_metadata
+from dcpm.infra.db.index_db import open_index_db, check_part_number_unique, connect
 
 
 @dataclass(frozen=True)
@@ -81,6 +82,13 @@ def create_project(library_root: Path, req: CreateProjectRequest) -> CreateProje
             raise FileExistsError("无法生成唯一的项目目录名称")
 
     ensure_pm_system(root)
+
+    if req.part_number:
+        idx_db = open_index_db(root)
+        with connect(idx_db) as conn:
+            if not check_part_number_unique(conn, req.part_number):
+                raise ValueError(f"料号 '{req.part_number}' 已存在，请使用唯一的料号")
+
     layout.month_dir.mkdir(parents=True, exist_ok=True)
     layout.project_dir.mkdir(parents=True, exist_ok=False)
     create_project_folders(layout.project_dir)
@@ -119,12 +127,14 @@ def create_project(library_root: Path, req: CreateProjectRequest) -> CreateProje
 
 
 def edit_project_metadata(
+    library_root: Path,
     project_dir: Path,
     *,
     name: str | None = None,
     tags: list[str] | None = None,
     status: str | None = None,
     description: str | None = None,
+    part_number: str | None = None,
 ) -> tuple[Project, Path]:
     meta_path = Path(project_dir) / ".project.json"
     if not meta_path.exists():
@@ -134,6 +144,12 @@ def edit_project_metadata(
     current_dir = Path(project_dir)
     updated_project = read_project_metadata(meta_path)
     
+    if part_number is not None and part_number != updated_project.part_number:
+        idx_db = open_index_db(library_root)
+        with connect(idx_db) as conn:
+            if not check_part_number_unique(conn, part_number, exclude_id=updated_project.id):
+                raise ValueError(f"料号 '{part_number}' 已存在")
+
     if name and name != updated_project.name:
         # Calculate new folder name
         # Format: {id}_{customer}_{name}
@@ -174,7 +190,7 @@ def edit_project_metadata(
     if tags is not None:
         tags = [t for t in (x.strip() for x in tags) if t]
         
-    p = update_project_metadata(meta_path, name=name, tags=tags, status=status, description=description)
+    p = update_project_metadata(meta_path, name=name, tags=tags, status=status, description=description, part_number=part_number)
     return p, current_dir
 
 
@@ -259,7 +275,7 @@ def archive_project(library_root: Path, project_dir: Path) -> CreateProjectResul
             raise FileExistsError("归档目录下存在大量同名项目，无法归档")
 
     shutil.move(str(src), str(dest))
-    project, _ = edit_project_metadata(dest, status="archived")
+    project, _ = edit_project_metadata(root, dest, status="archived")
     return CreateProjectResult(project=project, project_dir=dest)
 
 
@@ -283,7 +299,7 @@ def unarchive_project(library_root: Path, project_dir: Path, status: str = "ongo
             raise FileExistsError("目标月份目录下存在大量同名项目，无法取消归档")
 
     shutil.move(str(src), str(dest))
-    project, _ = edit_project_metadata(dest, status=status)
+    project, _ = edit_project_metadata(root, dest, status=status)
     return CreateProjectResult(project=project, project_dir=dest)
 
 

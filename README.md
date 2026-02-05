@@ -88,9 +88,13 @@ dcpm/
    - `NoteService`: 文件备注增删改查
 
 4. **UI 层** (`ui/`)
-   - 三栏式布局：Sidebar (260px) | Main Content (弹性) | RightPanel (320px)
-   - 使用 PyQt 信号/槽机制进行组件通信
-   - Fluent Design 风格：圆角、阴影、渐变背景
+   - **MainWindow**: 瘦身后的主窗口，仅负责组装 `Sidebar`、`DashboardView`、`RightPanel` 和页面切换。
+   - **Views**:
+     - `DashboardView`: 核心业务视图，包含项目网格、统计卡片和多维筛选逻辑。
+     - `FileBrowser`: 沉浸式文件管理。
+     - `SettingsInterface`: 系统配置中心。
+   - **Dialogs**: 独立的业务弹窗模块（`create_project`, `manage_project`）。
+   - **Components**: 可复用的 UI 组件库。
 
 ---
 

@@ -56,6 +56,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             month TEXT NOT NULL,
             project_dir TEXT NOT NULL,
             description TEXT,
+            part_number TEXT,
             pinned INTEGER NOT NULL DEFAULT 0,
             last_open_time TEXT,
             open_count INTEGER NOT NULL DEFAULT 0
@@ -116,6 +117,9 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_ext_res_project_id ON external_resources(project_id);")
     _ensure_project_columns(conn)
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_part_number ON projects(part_number) WHERE part_number IS NOT NULL AND part_number != '';"
+    )
 
 
 def _ensure_project_columns(conn: sqlite3.Connection) -> None:
@@ -126,16 +130,28 @@ def _ensure_project_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE projects ADD COLUMN last_open_time TEXT;")
     if "open_count" not in cols:
         conn.execute("ALTER TABLE projects ADD COLUMN open_count INTEGER NOT NULL DEFAULT 0;")
+    if "part_number" not in cols:
+        conn.execute("ALTER TABLE projects ADD COLUMN part_number TEXT;")
 
 
 def _try_enable_fts5(conn: sqlite3.Connection) -> bool:
     try:
+        # Check if project_fts table exists and has part_number column
+        # PRAGMA table_info returns list of tuples (cid, name, type, notnull, dflt_value, pk)
+        cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(project_fts);").fetchall()}
+        
+        # If table exists but part_number is missing, we must recreate it because FTS5 tables don't support ALTER TABLE properly
+        if "project_fts" in {str(r[0]) for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table';").fetchall()}:
+             if "part_number" not in cols:
+                 conn.execute("DROP TABLE project_fts;")
+
         conn.execute(
             """
             CREATE VIRTUAL TABLE IF NOT EXISTS project_fts USING fts5(
                 id UNINDEXED,
                 customer,
                 name,
+                part_number,
                 tags,
                 dir_name,
                 description,
@@ -180,12 +196,13 @@ def upsert_project(
     month: str,
     project_dir: str,
     description: str | None,
+    part_number: str | None,
     fts5_enabled: bool,
 ) -> None:
     conn.execute(
         """
-        INSERT INTO projects(id, customer, name, tags_json, status, create_time, month, project_dir, description)
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO projects(id, customer, name, tags_json, status, create_time, month, project_dir, description, part_number)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             customer=excluded.customer,
             name=excluded.name,
@@ -194,9 +211,10 @@ def upsert_project(
             create_time=excluded.create_time,
             month=excluded.month,
             project_dir=excluded.project_dir,
-            description=excluded.description;
+            description=excluded.description,
+            part_number=excluded.part_number;
         """,
-        (project_id, customer, name, json.dumps(tags, ensure_ascii=False), status, create_time, month, project_dir, description),
+        (project_id, customer, name, json.dumps(tags, ensure_ascii=False), status, create_time, month, project_dir, description, part_number),
     )
 
     if not fts5_enabled:
@@ -206,8 +224,8 @@ def upsert_project(
     dir_name = Path(project_dir).name
     conn.execute("DELETE FROM project_fts WHERE id = ?;", (project_id,))
     conn.execute(
-        "INSERT INTO project_fts(id, customer, name, tags, dir_name, description) VALUES(?, ?, ?, ?, ?, ?);",
-        (project_id, customer, name, tags_text, dir_name, description or ""),
+        "INSERT INTO project_fts(id, customer, name, part_number, tags, dir_name, description) VALUES(?, ?, ?, ?, ?, ?, ?);",
+        (project_id, customer, name, part_number or "", tags_text, dir_name, description or ""),
     )
 
 
@@ -536,4 +554,22 @@ def update_external_resource_status(conn: sqlite3.Connection, resource_id: int, 
 
 def delete_external_resource(conn: sqlite3.Connection, resource_id: int) -> None:
     conn.execute("DELETE FROM external_resources WHERE id = ?;", (resource_id,))
+
+
+def check_part_number_unique(conn: sqlite3.Connection, part_number: str, exclude_id: str | None = None) -> bool:
+    """Check if a part number is unique. Returns True if unique (or empty), False if duplicate."""
+    pn = part_number.strip()
+    if not pn:
+        return True
+
+    if exclude_id:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM projects WHERE part_number = ? AND id != ?;", (pn, exclude_id)
+        ).fetchone()[0]
+    else:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM projects WHERE part_number = ?;", (pn,)
+        ).fetchone()[0]
+
+    return count == 0
 
