@@ -10,7 +10,8 @@ from qfluentwidgets import (
 )
 
 from dcpm.infra.config.user_config import load_user_config, save_user_config, UserConfig
-from dcpm.services.scanner_service import scan_and_link_resources
+from dcpm.services.scanner_service import scan_and_link_resources, targeted_scan_and_link
+from dcpm.domain.project import Project
 
 
 class LineEditSettingCard(SettingCard):
@@ -28,14 +29,18 @@ class ScanThread(QThread):
     finished = pyqtSignal(int)
     error = pyqtSignal(str)
 
-    def __init__(self, library_root: Path, shared_path: str):
+    def __init__(self, library_root: Path, shared_path: str, target_project: Project | None = None):
         super().__init__()
         self.library_root = library_root
         self.shared_path = shared_path
+        self.target_project = target_project
 
     def run(self):
         try:
-            count = scan_and_link_resources(self.library_root, self.shared_path)
+            if self.target_project:
+                count = targeted_scan_and_link(self.library_root, self.shared_path, self.target_project)
+            else:
+                count = scan_and_link_resources(self.library_root, self.shared_path)
             self.finished.emit(count)
         except Exception as e:
             self.error.emit(str(e))

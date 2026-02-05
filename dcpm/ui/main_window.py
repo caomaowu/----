@@ -558,10 +558,30 @@ class MainWindow(QMainWindow):
         if dlg.exec(): # MessageBoxBase uses standard exec but returns boolean or result, checking standard way
             try:
                 from dcpm.services.project_service import create_project
+                from dcpm.ui.views.settings_interface import ScanThread
+                from dcpm.infra.config.user_config import load_user_config
+                
                 res = create_project(Path(self._library_root), dlg.build_request())
                 try: upsert_one_project(Path(self._library_root), ProjectEntry(project=res.project, project_dir=res.project_dir))
                 except: pass
+                
                 self._reload_projects()
+                
+                # Trigger incremental scan for the new project
+                cfg = load_user_config()
+                if cfg.shared_drive_path:
+                    # We use a throw-away thread instance here, but we need to keep a reference to it
+                    # or it might be garbage collected before finishing? QThread handles this usually if started.
+                    # But safer to attach to self.
+                    self._auto_scan_thread = ScanThread(
+                        Path(self._library_root), 
+                        cfg.shared_drive_path, 
+                        target_project=res.project
+                    )
+                    # We don't need to block UI or show heavy notifications for this auto-scan
+                    # Maybe just a small log or silent fail.
+                    self._auto_scan_thread.start()
+                    
             except Exception as e:
                 InfoBar.error(
                     title='错误',

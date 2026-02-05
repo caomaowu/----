@@ -11,7 +11,8 @@ COLORS = {
     'text': '#212529',
     'text_muted': '#6C757D',
     'border': '#E9ECEF',
-    'shadow': '#000000'
+    'shadow': '#000000',
+    'error': '#DC3545'
 }
 
 PRIMARY_COLOR = COLORS['primary']
