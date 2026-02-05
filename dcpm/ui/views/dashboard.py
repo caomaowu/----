@@ -433,7 +433,7 @@ class DashboardView(QWidget):
                     final_project = set_project_cover(final_dir, dlg.cover_source_path)
 
                 upsert_one_project(root, ProjectEntry(project=final_project, project_dir=final_dir, pinned=dlg.is_pinned))
-                self.reload_projects()
+                QTimer.singleShot(0, self.reload_projects)
                 
                 core_changed = (
                     final_project.name != entry.project.name or

@@ -114,18 +114,23 @@ class MainWindow(QMainWindow):
 
     def _on_project_opened(self, entry: ProjectEntry):
         if not self._library_root: return
-        try: mark_opened_now(Path(self._library_root), entry.project.id)
-        except: pass
+        try: 
+            mark_opened_now(Path(self._library_root), entry.project.id)
+        except Exception as e: 
+            print(f"Failed to mark project opened: {e}")
         
         # Switch to File Browser view
         self._file_browser.set_root(entry.project_dir, f"{entry.project.id} ({entry.project.name})", entry.project.id)
         self._stack.setCurrentIndex(1)
         
-        # Refresh dashboard when coming back? Maybe later. For now just update stats.
-        self._dashboard.reload_projects()
+        # Do NOT reload dashboard here. It's hidden anyway, and reloading might cause crashes 
+        # if the sender button is destroyed during event handling.
+        # We will reload when coming back.
 
     def _on_file_browser_back(self):
         self._stack.setCurrentIndex(0)
+        # Reload dashboard data to reflect changes (e.g. last opened time)
+        self._dashboard.reload_projects()
 
     def _on_dashboard_data_loaded(self, stats: DashboardStats):
         self._update_sidebar_data(stats)
