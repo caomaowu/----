@@ -5,16 +5,15 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, pyqtSignal, QSize, QModelIndex, QPoint, QDir, QUrl, QMimeData, QRect
-from PyQt6.QtGui import QDesktopServices, QAction, QCursor, QColor, QPainter, QFileSystemModel, QIcon, QKeySequence, QShortcut
+from PyQt6.QtCore import Qt, pyqtSignal, QModelIndex, QPoint, QDir, QUrl, QMimeData
+from PyQt6.QtGui import QDesktopServices, QAction, QFileSystemModel
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QListView, QStyle, 
-    QStyledItemDelegate, QMenu, QApplication, QFrame, QLabel, QStyleOptionViewItem, QInputDialog, QMessageBox,
+    QWidget, QVBoxLayout, QHBoxLayout, QListView, QMenu, QApplication, QFrame, QInputDialog,
     QStackedWidget
 )
 from qfluentwidgets import (
     BreadcrumbBar, FluentIcon, TransparentToolButton, 
-    SearchLineEdit, Action, CommandBar, Flyout, FlyoutAnimationType, MessageBoxBase, SubtitleLabel, BodyLabel, InfoBar, InfoBarPosition, PlainTextEdit,
+    MessageBoxBase, SubtitleLabel, BodyLabel, InfoBar, InfoBarPosition,
     Pivot
 )
 
@@ -23,136 +22,8 @@ from dcpm.services.note_service import NoteService
 from dcpm.services.tag_service import TagService
 from dcpm.ui.components.note_dialog import NoteDialog
 from dcpm.ui.views.inspection_timeline import InspectionTimeline
-
-class FileIconProvider(QFileSystemModel):
-    """Custom FileSystemModel to provide better icons if needed, 
-    but for now standard QFileSystemModel is okay. 
-    We can override data() to return FluentIcons for folders if we want."""
-    pass
-
-
-class FileItemDelegate(QStyledItemDelegate):
-    def __init__(self, parent=None, tag_provider=None):
-        super().__init__(parent)
-        self.margins = 8
-        self.icon_size = 48
-        self.tag_provider = tag_provider
-        
-    def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:
-        return QSize(100, 130)  # Width, Height for grid items
-
-    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex):
-        painter.save()
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        
-        # Draw background for selection/hover
-        if option.state & QStyle.StateFlag.State_Selected:
-            painter.setBrush(QColor(COLORS['primary_light']))
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawRoundedRect(option.rect.adjusted(4, 4, -4, -4), 8, 8)
-        elif option.state & QStyle.StateFlag.State_MouseOver:
-            painter.setBrush(QColor(COLORS['bg'])) # Slightly darker than app bg
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawRoundedRect(option.rect.adjusted(4, 4, -4, -4), 8, 8)
-
-        # Draw Icon
-        # We get the icon from the model (QFileSystemModel provides system icons)
-        icon: QIcon = index.data(Qt.ItemDataRole.DecorationRole)
-        name: str = index.data(Qt.ItemDataRole.DisplayRole)
-        
-        rect = option.rect
-        icon_rect = rect.adjusted(0, 12, 0, -40) # Top area for icon
-        
-        if icon:
-            pixmap = icon.pixmap(self.icon_size, self.icon_size)
-            # Center icon
-            x = icon_rect.x() + (icon_rect.width() - self.icon_size) // 2
-            y = icon_rect.y() + (icon_rect.height() - self.icon_size) // 2
-            painter.drawPixmap(x, y, pixmap)
-
-        # Draw Text
-        text_rect = rect.adjusted(4, self.icon_size + 20, -4, -4)
-        painter.setPen(QColor(COLORS['text']))
-        
-        # Elide text if too long
-        fm = option.fontMetrics
-        elided_text = fm.elidedText(name, Qt.TextElideMode.ElideMiddle, text_rect.width())
-        
-        painter.drawText(text_rect, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop, elided_text)
-
-        tags: list[str] = []
-        if callable(self.tag_provider):
-            try:
-                tags = list(self.tag_provider(index) or [])
-            except Exception:
-                tags = []
-
-        if tags:
-            tags = tags[:2]
-            more_count = 0
-            if callable(self.tag_provider):
-                try:
-                    all_tags = list(self.tag_provider(index) or [])
-                    more_count = max(0, len(all_tags) - len(tags))
-                except Exception:
-                    more_count = 0
-            if more_count > 0:
-                tags = tags + [f"+{more_count}"]
-
-            tag_font = option.font
-            if tag_font.pointSize() > 9:
-                tag_font.setPointSize(tag_font.pointSize() - 2)
-            painter.setFont(tag_font)
-            fm2 = painter.fontMetrics()
-
-            pad_x = 6
-            pad_y = 2
-            gap = 6
-            chip_h = fm2.height() + pad_y * 2
-            y = text_rect.y() + fm.height() + 6
-
-            widths = [fm2.horizontalAdvance(t) + pad_x * 2 for t in tags]
-            total_w = sum(widths) + gap * (len(widths) - 1)
-            x = rect.x() + max(0, (rect.width() - total_w) // 2)
-
-            bg = QColor(COLORS["primary"])
-            bg.setAlpha(26)
-            border = QColor(COLORS["primary"])
-            border.setAlpha(64)
-
-            for t, w in zip(tags, widths):
-                chip_rect = QRect(x, y, w, chip_h)
-                painter.setBrush(bg)
-                painter.setPen(border)
-                painter.drawRoundedRect(chip_rect, 8, 8)
-                painter.setPen(QColor(COLORS["primary"]))
-                painter.drawText(chip_rect, Qt.AlignmentFlag.AlignCenter, t)
-                x += w + gap
-        
-        painter.restore()
-
-
-class TagDialog(MessageBoxBase):
-    def __init__(self, title: str, content: str, parent=None):
-        super().__init__(parent)
-        self.titleLabel = SubtitleLabel(title, self)
-        self.textEdit = PlainTextEdit(self)
-        self.textEdit.setPlainText(content)
-        self.textEdit.setPlaceholderText("用逗号分隔标签，例如：第一版, 第二版, 常用")
-        self.textEdit.setMinimumHeight(120)
-        self.textEdit.setMinimumWidth(320)
-
-        self.viewLayout.addWidget(self.titleLabel)
-        self.viewLayout.addWidget(self.textEdit)
-
-        self.yesButton.setText("确定")
-        self.cancelButton.setText("取消")
-
-        self.widget.setMinimumWidth(360)
-
-    def get_text(self) -> str:
-        return self.textEdit.toPlainText()
-
+from dcpm.ui.components.file_delegate import FileItemDelegate
+from dcpm.ui.dialogs.tag_dialog import TagDialog
 
 class FileBrowser(QWidget):
     backRequested = pyqtSignal()
@@ -218,14 +89,7 @@ class FileBrowser(QWidget):
         # Determine Drop Target
         target_dir = None
         
-        # Check if dropped onto a specific item (folder) in the list view
-        # We need to map the position to the list view coordinate system if needed, 
-        # but since dropEvent is on FileBrowser (parent), we need to check if cursor is over a list item.
-        # Actually, since we disabled drop on ListView, the event bubbles to FileBrowser with global pos?
-        # No, it's relative to FileBrowser.
-        
         # Let's try to find the index under mouse position
-        # We need to map pos to list_view coordinates
         list_view_pos = self.list_view.mapFrom(self, event.position().toPoint())
         index = self.list_view.indexAt(list_view_pos)
         
@@ -319,9 +183,6 @@ class FileBrowser(QWidget):
         self.model.setNameFilters(["*"])
         self.model.setNameFilterDisables(False)
         
-        # Use a nicer icon provider if we had one, but default is okay for now
-        # self.model.setIconProvider(...)
-
         self.list_view = QListView()
         self.list_view.setModel(self.model)
         self.list_view.setViewMode(QListView.ViewMode.IconMode)
@@ -334,18 +195,9 @@ class FileBrowser(QWidget):
         self.list_view.setSelectionMode(QListView.SelectionMode.ExtendedSelection)
         
         # Drag & Drop Configuration
-        self.list_view.setAcceptDrops(False) # Disable default view drop to let parent handle it, or we handle it here
-        # Actually, QListView consumes drop events if setAcceptDrops is True. 
-        # But we implemented dragEnterEvent/dropEvent on the parent Widget (FileBrowser).
-        # QListView is a child of FileBrowser. If mouse is over QListView, it receives the event first.
-        # If it doesn't accept drops, the event propagates to parent.
-        # BUT, standard QListView might not propagate nicely if it thinks it can handle something or just ignores.
-        # Let's ensure QListView ignores drops so parent gets them, OR we install event filter.
-        # The safest way for "blank area drop" is letting the parent handle it.
-        # Let's explicitly ignore drops on list view to bubble up.
         self.list_view.setAcceptDrops(False) 
-        self.list_view.setDragEnabled(True) # Allow dragging items OUT (or within)
-        self.list_view.setDragDropMode(QListView.DragDropMode.DragOnly) # We handle drops manually on parent
+        self.list_view.setDragEnabled(True) 
+        self.list_view.setDragDropMode(QListView.DragDropMode.DragOnly) 
         
         # Custom Delegate for Fluent Look
         self.delegate = FileItemDelegate(self.list_view, self._get_tags_for_index)
@@ -361,7 +213,7 @@ class FileBrowser(QWidget):
 
     def set_root(self, path: Path, project_name: str = "", project_id: str = ""):
         """Entry point: Navigate to a project folder"""
-        if not path.exists():
+        if not path or not path.exists():
             return
             
         self.current_root = path
@@ -468,7 +320,6 @@ class FileBrowser(QWidget):
             
             self.breadcrumb.setCurrentItem(str(current_path))
         except ValueError:
-            # Should not happen if we only navigate inside
             pass
 
     def _on_breadcrumb_clicked(self, path_str: str):
@@ -500,9 +351,6 @@ class FileBrowser(QWidget):
             # Go up one level
             parent_idx = current_idx.parent()
             if parent_idx.isValid():
-                # Ensure we don't go above system root (though logical check handles project root)
-                # But wait, parent() of a folder inside root is correct.
-                # If we are at project root, we handled it above.
                 self.list_view.setRootIndex(parent_idx)
                 self._update_breadcrumbs(current_path.parent)
 
@@ -512,10 +360,6 @@ class FileBrowser(QWidget):
         QDesktopServices.openUrl(QUrl.fromLocalFile(folder_path))
 
     def _refresh(self):
-        # QFileSystemModel watches automatically, but sometimes we might want to force
-        # Actually QFileSystemModel doesn't have a simple reload. 
-        # But setting root path again usually works or it just works by itself.
-        # Let's just re-set root index to ensure view is synced
         idx = self.list_view.rootIndex()
         self.list_view.setRootIndex(idx)
 
@@ -534,7 +378,6 @@ class FileBrowser(QWidget):
         path = self.model.filePath(index)
         note = self.note_service.get_note(path)
         if note:
-             # Create custom info bar with styling to ensure visibility
              InfoBar.info(
                 title='备注',
                 content=note,

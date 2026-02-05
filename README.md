@@ -55,11 +55,13 @@ dcpm/
     ├── components/
     │   ├── cards.py          # 统计卡片、阴影卡片基类
     │   ├── note_dialog.py    # 备注编辑弹窗
-    │   ├── project_card.py   # 项目卡片组件（网格/紧凑模式）
-    └── views/
-        ├── sidebar.py        # 左侧导航栏
-        ├── right_panel.py    # 右侧快捷操作面板
-        └── file_browser.py   # 文件浏览器（面包屑、图标视图）
+    │   ├── project_card.py   # 项目卡片组件
+    │   └── file_delegate.py  # 文件列表渲染代理 (New)
+    ├── dialogs/              # 独立业务弹窗
+    │   ├── create_project.py # 新建项目向导
+    │   ├── manage_project.py # 项目属性管理
+    │   └── tag_dialog.py     # 标签编辑弹窗 (New)
+    └── views/                # 核心视图组件
 ```
 
 ---
