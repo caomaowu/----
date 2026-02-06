@@ -1,5 +1,6 @@
 import os
 import sys
+import logging
 import traceback
 from PyQt6.QtWidgets import QApplication
 
@@ -11,6 +12,7 @@ def exception_hook(exctype, value, tb):
     from qfluentwidgets import InfoBar, InfoBarPosition
 
     traceback_str = "".join(traceback.format_exception(exctype, value, tb))
+    logging.critical(f"Unhandled exception:\n{traceback_str}")
     print(traceback_str, file=sys.stderr)
     # 尝试弹窗显示错误（如果 QApplication 已创建）
     if QApplication.instance():
@@ -30,6 +32,17 @@ def exception_hook(exctype, value, tb):
 
 
 def run(argv: list[str] | None = None) -> int:
+    # Configure logging
+    log_file = os.path.join(os.getcwd(), 'crash.log')
+    logging.basicConfig(
+        filename=log_file,
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        encoding='utf-8',
+        filemode='a'
+    )
+    logging.info("Application starting...")
+
     sys.excepthook = exception_hook
 
     if argv is None:

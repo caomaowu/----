@@ -11,6 +11,7 @@ from qfluentwidgets import (
 
 from dcpm.infra.config.user_config import load_user_config, save_user_config, UserConfig
 from dcpm.services.scanner_service import scan_and_link_resources, targeted_scan_and_link
+from dcpm.services.shared_drive_service import SharedDriveService
 from dcpm.domain.project import Project
 
 
@@ -96,17 +97,61 @@ class SettingsInterface(ScrollArea):
         self.resource_group.addSettingCard(self.shared_path_card)
         self.resource_group.addSettingCard(self.scan_card)
         
+        # 共享盘文件索引组
+        self.file_index_group = SettingCardGroup("共享盘文件索引", self.scrollWidget)
+        
+        # 共享盘文件路径（可复用探伤报告路径或单独设置）
+        self.file_index_path_card = LineEditSettingCard(
+            FI.FOLDER,
+            "共享盘根目录",
+            "设置共享盘的根目录路径，用于索引项目相关文件",
+            self.file_index_group
+        )
+        self.file_index_path_card.lineEdit.setPlaceholderText(r"例如: \\192.168.1.100\Engineering")
+        self.file_index_path_card.lineEdit.editingFinished.connect(self._save_file_index_path)
+        
+        # 索引按钮
+        self.file_index_scan_card = PrimaryPushSettingCard(
+            "开始索引",
+            FI.SEARCH,
+            "索引共享盘文件",
+            "扫描共享盘并自动关联与项目相关的文件",
+            self.file_index_group
+        )
+        self.file_index_scan_card.clicked.connect(self._start_file_index_scan)
+        
+        self.file_index_group.addSettingCard(self.file_index_path_card)
+        self.file_index_group.addSettingCard(self.file_index_scan_card)
+        
         self.expandLayout.addWidget(self.resource_group)
+        self.expandLayout.addWidget(self.file_index_group)
 
     def _load_config(self):
         cfg = load_user_config()
         if cfg.shared_drive_path:
             self.shared_path_card.lineEdit.setText(cfg.shared_drive_path)
+            # 默认复用探伤报告路径
+            self.file_index_path_card.lineEdit.setText(cfg.shared_drive_path)
 
     def _save_path(self):
         path = self.shared_path_card.lineEdit.text().strip()
         cfg = load_user_config()
-        new_cfg = UserConfig(library_root=cfg.library_root, shared_drive_path=path)
+        new_cfg = UserConfig(
+            library_root=cfg.library_root,
+            shared_drive_path=path,
+            preset_tags=cfg.preset_tags
+        )
+        save_user_config(new_cfg)
+    
+    def _save_file_index_path(self):
+        path = self.file_index_path_card.lineEdit.text().strip()
+        cfg = load_user_config()
+        # 这里我们复用 shared_drive_path 字段，或者可以添加新的字段
+        new_cfg = UserConfig(
+            library_root=cfg.library_root,
+            shared_drive_path=path,
+            preset_tags=cfg.preset_tags
+        )
         save_user_config(new_cfg)
 
     def _start_scan(self):
@@ -153,6 +198,76 @@ class SettingsInterface(ScrollArea):
         self.scan_card.button.setText("立即扫描")
         InfoBar.error(
             title="扫描失败",
+            content=err,
+            parent=self,
+            duration=5000
+        )
+    
+    def _start_file_index_scan(self):
+        """开始共享盘文件索引扫描"""
+        cfg = load_user_config()
+        if not cfg.library_root:
+            InfoBar.warning(
+                title="无法扫描",
+                content="请先在主页选择项目库根目录",
+                parent=self,
+                duration=3000
+            )
+            return
+        
+        shared_path = self.file_index_path_card.lineEdit.text().strip()
+        if not shared_path:
+            InfoBar.warning(
+                title="无法扫描",
+                content="请先设置共享盘根目录路径",
+                parent=self,
+                duration=3000
+            )
+            return
+        
+        self.file_index_scan_card.button.setEnabled(False)
+        self.file_index_scan_card.button.setText("索引中...")
+        
+        # 使用线程执行扫描
+        from PyQt6.QtCore import QThread, pyqtSignal
+        
+        class FileIndexThread(QThread):
+            finished = pyqtSignal(int)
+            error = pyqtSignal(str)
+            
+            def __init__(self, library_root: Path, shared_path: str):
+                super().__init__()
+                self.library_root = library_root
+                self.shared_path = shared_path
+            
+            def run(self):
+                try:
+                    service = SharedDriveService(self.library_root)
+                    count = service.scan_and_index(self.shared_path)
+                    self.finished.emit(count)
+                except Exception as e:
+                    self.error.emit(str(e))
+        
+        self._file_index_thread = FileIndexThread(Path(cfg.library_root), shared_path)
+        self._file_index_thread.finished.connect(self._on_file_index_finished)
+        self._file_index_thread.error.connect(self._on_file_index_error)
+        self._file_index_thread.start()
+    
+    def _on_file_index_finished(self, count: int):
+        self.file_index_scan_card.button.setEnabled(True)
+        self.file_index_scan_card.button.setText("开始索引")
+        InfoBar.success(
+            title="索引完成",
+            content=f"已成功索引 {count} 个文件",
+            parent=self,
+            duration=3000
+        )
+    
+    def _on_file_index_error(self, err: str):
+        self.file_index_scan_card.button.setEnabled(True)
+        self.file_index_scan_card.button.setText("开始索引")
+        InfoBar.error(
+            title="索引失败",
             content=err,
             parent=self,
             duration=5000

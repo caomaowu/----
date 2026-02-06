@@ -2,7 +2,7 @@ from PyQt6.QtCore import Qt, QSize, QModelIndex, QRect
 from PyQt6.QtGui import QPainter, QColor, QIcon
 from PyQt6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem, QStyle
 
-from dcpm.ui.theme.colors import COLORS
+from dcpm.ui.theme.colors import COLORS, get_tag_colors
 
 class FileItemDelegate(QStyledItemDelegate):
     def __init__(self, parent=None, tag_provider=None):
@@ -18,41 +18,53 @@ class FileItemDelegate(QStyledItemDelegate):
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         
+        rect = option.rect
+
         # Draw background for selection/hover
         if option.state & QStyle.StateFlag.State_Selected:
             painter.setBrush(QColor(COLORS['primary_light']))
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawRoundedRect(option.rect.adjusted(4, 4, -4, -4), 8, 8)
+            painter.drawRoundedRect(rect.adjusted(4, 4, -4, -4), 8, 8)
         elif option.state & QStyle.StateFlag.State_MouseOver:
             painter.setBrush(QColor(COLORS['bg'])) # Slightly darker than app bg
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawRoundedRect(option.rect.adjusted(4, 4, -4, -4), 8, 8)
+            painter.drawRoundedRect(rect.adjusted(4, 4, -4, -4), 8, 8)
+
+        # --- 布局计算 (自上而下) ---
+        
+        # 1. 图标区域 (固定在顶部)
+        icon_top_margin = 12
+        icon_x = rect.x() + (rect.width() - self.icon_size) // 2
+        icon_y = rect.y() + icon_top_margin
+        
+        # 2. 文本区域 (在图标下方)
+        text_top_gap = 8
+        text_y = icon_y + self.icon_size + text_top_gap
+        fm = option.fontMetrics
+        text_height = fm.height()
+        text_rect = QRect(rect.x() + 4, text_y, rect.width() - 8, text_height)
+
+        # 3. 标签区域 (在文本下方)
+        tag_top_gap = 6
+        tag_y = text_y + text_height + tag_top_gap
+
+        # --- 开始绘制 ---
 
         # Draw Icon
-        # We get the icon from the model (QFileSystemModel provides system icons)
         icon: QIcon = index.data(Qt.ItemDataRole.DecorationRole)
-        name: str = index.data(Qt.ItemDataRole.DisplayRole)
-        
-        rect = option.rect
-        icon_rect = rect.adjusted(0, 12, 0, -40) # Top area for icon
-        
         if icon:
             pixmap = icon.pixmap(self.icon_size, self.icon_size)
-            # Center icon
-            x = icon_rect.x() + (icon_rect.width() - self.icon_size) // 2
-            y = icon_rect.y() + (icon_rect.height() - self.icon_size) // 2
-            painter.drawPixmap(x, y, pixmap)
+            painter.drawPixmap(icon_x, icon_y, pixmap)
 
         # Draw Text
-        text_rect = rect.adjusted(4, self.icon_size + 20, -4, -4)
+        name: str = index.data(Qt.ItemDataRole.DisplayRole)
         painter.setPen(QColor(COLORS['text']))
         
         # Elide text if too long
-        fm = option.fontMetrics
         elided_text = fm.elidedText(name, Qt.TextElideMode.ElideMiddle, text_rect.width())
-        
         painter.drawText(text_rect, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop, elided_text)
 
+        # Draw Tags
         tags: list[str] = []
         if callable(self.tag_provider):
             try:
@@ -61,16 +73,12 @@ class FileItemDelegate(QStyledItemDelegate):
                 tags = []
 
         if tags:
-            tags = tags[:2]
-            more_count = 0
-            if callable(self.tag_provider):
-                try:
-                    all_tags = list(self.tag_provider(index) or [])
-                    more_count = max(0, len(all_tags) - len(tags))
-                except Exception:
-                    more_count = 0
+            # 优先显示前两个，多的显示 +N
+            display_tags = tags[:2]
+            more_count = max(0, len(tags) - 2)
+            
             if more_count > 0:
-                tags = tags + [f"+{more_count}"]
+                display_tags.append(f"+{more_count}")
 
             tag_font = option.font
             if tag_font.pointSize() > 9:
@@ -82,24 +90,33 @@ class FileItemDelegate(QStyledItemDelegate):
             pad_y = 2
             gap = 6
             chip_h = fm2.height() + pad_y * 2
-            y = text_rect.y() + fm.height() + 6
-
-            widths = [fm2.horizontalAdvance(t) + pad_x * 2 for t in tags]
+            
+            widths = [fm2.horizontalAdvance(t) + pad_x * 2 for t in display_tags]
             total_w = sum(widths) + gap * (len(widths) - 1)
-            x = rect.x() + max(0, (rect.width() - total_w) // 2)
+            
+            # 计算标签行的起始 X (居中)
+            tag_x = rect.x() + max(0, (rect.width() - total_w) // 2)
 
-            bg = QColor(COLORS["primary"])
-            bg.setAlpha(26)
-            border = QColor(COLORS["primary"])
-            border.setAlpha(64)
-
-            for t, w in zip(tags, widths):
-                chip_rect = QRect(x, y, w, chip_h)
-                painter.setBrush(bg)
-                painter.setPen(border)
+            for t, w in zip(display_tags, widths):
+                # 获取该标签对应的配色
+                bg_hex, text_hex = get_tag_colors(t)
+                
+                chip_rect = QRect(tag_x, tag_y, w, chip_h)
+                
+                # 绘制背景 (纯色，不透明或微调)
+                painter.setBrush(QColor(bg_hex))
+                
+                # 绘制边框 (稍微透明一点的文字色，或者无边框)
+                border_color = QColor(text_hex)
+                border_color.setAlpha(80) 
+                painter.setPen(border_color)
+                
                 painter.drawRoundedRect(chip_rect, 8, 8)
-                painter.setPen(QColor(COLORS["primary"]))
+                
+                # 绘制文字
+                painter.setPen(QColor(text_hex))
                 painter.drawText(chip_rect, Qt.AlignmentFlag.AlignCenter, t)
-                x += w + gap
+                
+                tag_x += w + gap
         
         painter.restore()

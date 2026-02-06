@@ -20,11 +20,11 @@ def ensure_pm_system(root: Path) -> Path:
 
 def create_project_folders(project_dir: Path) -> None:
     folders = [
-        "01_工程数据",
-        "02_技术文档",
-        "03_项目管理",
-        "04_试模现场",
-        "05_交付物",
+        "01_3D文件",
+        "02_模流报告",
+        "03_试模数据",
+        "04_项目文件",
+        "05_问题",
         "06_其它",
     ]
     for rel in folders:

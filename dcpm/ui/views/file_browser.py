@@ -22,6 +22,7 @@ from dcpm.services.note_service import NoteService
 from dcpm.services.tag_service import TagService
 from dcpm.ui.components.note_dialog import NoteDialog
 from dcpm.ui.views.inspection_timeline import InspectionTimeline
+from dcpm.ui.views.shared_drive_browser import SharedDriveBrowser
 from dcpm.ui.components.file_delegate import FileItemDelegate
 from dcpm.ui.dialogs.tag_dialog import TagDialog
 
@@ -50,6 +51,7 @@ class FileBrowser(QWidget):
         # Pivot (Tabs)
         self.pivot = Pivot(self)
         self.pivot.addItem("files", "项目文件")
+        self.pivot.addItem("shared", "共享盘文件")
         self.pivot.addItem("inspection", "探伤记录")
         self.pivot.currentItemChanged.connect(self._on_pivot_changed)
         self._layout.addWidget(self.pivot)
@@ -66,15 +68,21 @@ class FileBrowser(QWidget):
         
         self._init_file_view()
         
-        # Page 1: Timeline (Placeholder)
+        # Page 1: Shared Drive Browser (Placeholder)
+        self.shared_drive_view = QWidget()
+        self.stack.addWidget(self.shared_drive_view)
+        
+        # Page 2: Timeline (Placeholder)
         self.timeline_view = QWidget()
         self.stack.addWidget(self.timeline_view)
 
     def _on_pivot_changed(self, key: str):
         if key == "files":
             self.stack.setCurrentIndex(0)
-        elif key == "inspection":
+        elif key == "shared":
             self.stack.setCurrentIndex(1)
+        elif key == "inspection":
+            self.stack.setCurrentIndex(2)
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
@@ -223,6 +231,19 @@ class FileBrowser(QWidget):
         
         # Reset Pivot
         self.pivot.setCurrentItem("files")
+        
+        # Re-init shared drive view
+        if self.project_id:
+            old_shared = self.shared_drive_view
+            self.stack.removeWidget(old_shared)
+            old_shared.deleteLater()
+            
+            self.shared_drive_view = SharedDriveBrowser(
+                self.library_root,
+                self.project_id,
+                parent=self
+            )
+            self.stack.addWidget(self.shared_drive_view)
         
         # Re-init timeline
         if self.project_id:
@@ -468,6 +489,10 @@ class FileBrowser(QWidget):
             new_folder_action = QAction(FluentIcon.ADD.icon(), "新建文件夹", self)
             new_folder_action.triggered.connect(self._create_new_folder)
             menu.addAction(new_folder_action)
+
+            new_file_action = QAction(FluentIcon.DOCUMENT.icon(), "新建文件", self)
+            new_file_action.triggered.connect(self._create_new_file)
+            menu.addAction(new_file_action)
             
             menu.addSeparator()
 
@@ -475,11 +500,20 @@ class FileBrowser(QWidget):
             refresh_action.triggered.connect(self._refresh)
             menu.addAction(refresh_action)
 
+            if QApplication.clipboard().mimeData().hasUrls():
+                paste_action = QAction(FluentIcon.PASTE.icon(), "粘贴", self)
+                paste_action.triggered.connect(self._paste_from_clipboard)
+                menu.addAction(paste_action)
+
             menu.addSeparator()
 
             explorer_action = QAction(FluentIcon.FOLDER.icon(), "在资源管理器中打开", self)
             explorer_action.triggered.connect(self._open_in_explorer)
             menu.addAction(explorer_action)
+
+            terminal_action = QAction(FluentIcon.COMMAND_PROMPT.icon(), "在终端中打开", self)
+            terminal_action.triggered.connect(self._open_in_terminal)
+            menu.addAction(terminal_action)
 
         menu.exec(self.list_view.mapToGlobal(pos))
 
@@ -555,3 +589,53 @@ class FileBrowser(QWidget):
                  pass # Or show error
             except Exception as e:
                 print(f"Create folder failed: {e}")
+
+    def _create_new_file(self):
+        current_idx = self.list_view.rootIndex()
+        parent_dir = Path(self.model.filePath(current_idx))
+        if not parent_dir.exists():
+            parent_dir = self.current_root
+            
+        new_name, ok = QInputDialog.getText(self, "新建文件", "请输入文件名:", text="new_file.txt")
+        if ok and new_name:
+            new_path = parent_dir / new_name
+            try:
+                # Create empty file
+                with open(new_path, 'w', encoding='utf-8') as f:
+                    pass
+            except Exception as e:
+                print(f"Create file failed: {e}")
+
+    def _paste_from_clipboard(self):
+        clipboard = QApplication.clipboard()
+        mime_data = clipboard.mimeData()
+        
+        if mime_data.hasUrls():
+            current_idx = self.list_view.rootIndex()
+            dest_dir = Path(self.model.filePath(current_idx))
+            if not dest_dir.exists():
+                dest_dir = self.current_root
+                
+            for url in mime_data.urls():
+                src_path = Path(url.toLocalFile())
+                if src_path.exists():
+                    try:
+                        dst_path = dest_dir / src_path.name
+                        if src_path.is_dir():
+                            if not dst_path.exists():
+                                shutil.copytree(src_path, dst_path)
+                        else:
+                            shutil.copy2(src_path, dst_path)
+                    except Exception as e:
+                        print(f"Paste failed for {src_path}: {e}")
+
+    def _open_in_terminal(self):
+        current_idx = self.list_view.rootIndex()
+        path = Path(self.model.filePath(current_idx))
+        if not path.exists():
+            path = self.current_root
+            
+        try:
+            subprocess.Popen(f'start powershell -NoExit -Command "cd \'{path}\'"', shell=True)
+        except Exception as e:
+            print(f"Open terminal failed: {e}")

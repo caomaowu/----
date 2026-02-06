@@ -1,9 +1,12 @@
 from pathlib import Path
+import logging
+import traceback
 
 from PyQt6.QtCore import Qt, QTimer, QEvent
 from PyQt6.QtWidgets import (
     QFileDialog, QFrame, QHBoxLayout, QMainWindow, QStackedWidget, QWidget
 )
+from qfluentwidgets import InfoBar, InfoBarPosition
 
 from dcpm.ui.theme.colors import APP_BG, COLORS
 from dcpm.ui.views.file_browser import FileBrowser
@@ -114,14 +117,28 @@ class MainWindow(QMainWindow):
 
     def _on_project_opened(self, entry: ProjectEntry):
         if not self._library_root: return
-        try: 
-            mark_opened_now(Path(self._library_root), entry.project.id)
-        except Exception as e: 
-            print(f"Failed to mark project opened: {e}")
-        
-        # Switch to File Browser view
-        self._file_browser.set_root(entry.project_dir, f"{entry.project.id} ({entry.project.name})", entry.project.id)
-        self._stack.setCurrentIndex(1)
+        try:
+            try: 
+                mark_opened_now(Path(self._library_root), entry.project.id)
+            except Exception as e: 
+                logging.warning(f"Failed to mark project opened: {e}")
+            
+            # Switch to File Browser view
+            self._file_browser.set_root(entry.project_dir, f"{entry.project.id} ({entry.project.name})", entry.project.id)
+            self._stack.setCurrentIndex(1)
+        except Exception as e:
+            traceback_str = "".join(traceback.format_exception(type(e), e, e.__traceback__))
+            logging.error(f"Error opening project:\n{traceback_str}")
+            
+            InfoBar.error(
+                title='打开项目失败',
+                content=f"发生错误，已记录到日志文件。\n{e}",
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=5000,
+                parent=self
+            )
         
         # Do NOT reload dashboard here. It's hidden anyway, and reloading might cause crashes 
         # if the sender button is destroyed during event handling.

@@ -71,7 +71,8 @@ class ManageProjectDialog(QDialog):
 
         # 3. Cover
         cover_container = QWidget()
-        cover_container.setStyleSheet(f"background: {COLORS['bg']}; border-radius: 8px; border: 1px solid {COLORS['border']};")
+        cover_container.setObjectName("coverContainer")
+        cover_container.setStyleSheet(f"#coverContainer {{ background: {COLORS['bg']}; border-radius: 8px; border: 1px solid {COLORS['border']}; }}")
         cover_h = QHBoxLayout(cover_container)
         cover_h.setContentsMargins(16, 16, 16, 16)
         
@@ -83,8 +84,10 @@ class ManageProjectDialog(QDialog):
         btn_v = QVBoxLayout()
         btn_v.setSpacing(8)
         pick_btn = PushButton("更换封面", self)
+        pick_btn.setFixedHeight(32)
         pick_btn.clicked.connect(self._pick_cover)
         clear_btn = PushButton("清除", self)
+        clear_btn.setFixedHeight(32)
         clear_btn.clicked.connect(self._clear_cover)
         btn_v.addWidget(pick_btn)
         btn_v.addWidget(clear_btn)

@@ -450,10 +450,71 @@ CREATE TABLE disabled_auto_tags(
 
 ---
 
-## 外部资源关联系统 (New)
+## 外部资源关联系统
 
 ### 概述
 系统支持关联外部共享盘（NAS）中的探伤报告文件夹，通过智能扫描和模糊匹配算法，将散落在共享盘中的资源映射到本地项目。
+
+---
+
+## 共享盘文件索引系统 (New)
+
+### 概述
+新增的独立索引功能，用于高效索引共享盘上的项目相关文件（工程图纸、3D 模型、报告等）。不同于探伤记录的文件夹级关联，此功能提供文件级的精确索引和检索。
+
+### 核心特性
+- **文件级索引**: 扫描并索引共享盘中的工程文件（STP、DWG、PDF 等）
+- **智能匹配**: 根据项目名称、客户、件号自动匹配相关文件（匹配度评分）
+- **状态管理**: 支持"已索引"、"已确认"、"已忽略"三种状态
+- **多维筛选**: 支持按文件名搜索、状态筛选、文件类型筛选
+- **快速打开**: 一键打开文件或所在文件夹
+
+### 支持的文件类型
+`.stp`, `.step`, `.igs`, `.iges`, `.stl`, `.obj`, `.dwg`, `.dxf`, `.pdf`, `.doc`, `.docx`, `.xls`, `.xlsx`, `.ppt`, `.pptx`, `.jpg`, `.jpeg`, `.png`, `.tif`, `.tiff`, `.zip`, `.rar`, `.7z`, `.txt`, `.csv`, `.xml`, `.json`
+
+### 数据库表结构
+```sql
+CREATE TABLE shared_drive_files(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id TEXT NOT NULL,
+    root_path TEXT NOT NULL,
+    file_path TEXT NOT NULL,        -- 相对根目录的路径
+    file_name TEXT NOT NULL,
+    file_size INTEGER NOT NULL,
+    modified_time TEXT NOT NULL,
+    file_hash TEXT,                 -- 用于去重
+    file_type TEXT NOT NULL,        -- 文件扩展名
+    status TEXT NOT NULL,           -- 'indexed', 'confirmed', 'ignored'
+    match_score INTEGER NOT NULL,   -- 匹配分数 0-100
+    created_at TEXT NOT NULL,
+    UNIQUE(root_path, file_path)
+);
+```
+
+### 使用方式
+
+**全局索引**（设置页）：
+1. 进入设置页 → "共享盘文件索引" 区域
+2. 配置共享盘根目录路径
+3. 点击"开始索引"扫描整个共享盘
+
+**项目内查看**（项目文件浏览器）：
+1. 打开任意项目进入文件浏览器
+2. 点击 Tab 栏的"共享盘文件"
+3. 查看自动匹配的文件列表
+4. 使用搜索框筛选文件名
+5. 使用状态/类型下拉框进一步筛选
+6. 点击文件打开，或确认/忽略关联
+
+### 相关文件
+- `domain/shared_drive_file.py` - 领域模型定义
+- `services/shared_drive_service.py` - 扫描、索引、匹配服务
+- `ui/views/shared_drive_browser.py` - 共享盘文件浏览器 UI
+- `infra/db/index_db.py` - 数据库表结构和操作
+
+---
+
+## 外部资源关联系统
 
 ### 核心流程
 1. **配置**: 在设置页配置共享盘根路径 (UNC Path)。

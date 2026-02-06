@@ -7,7 +7,8 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QScrollArea, QGridLayout, QDialog
 )
 from qfluentwidgets import (
-    SubtitleLabel, DropDownPushButton, RoundMenu, Action, Pivot, InfoBar, InfoBarPosition, BodyLabel, MessageBoxBase
+    SubtitleLabel, DropDownPushButton, RoundMenu, Action, Pivot, InfoBar, InfoBarPosition, BodyLabel, MessageBoxBase,
+    PushButton, PrimaryPushButton, FluentIcon as FI
 )
 
 from dcpm.services.library_service import ProjectEntry
@@ -48,6 +49,10 @@ class DashboardView(QWidget):
         self._time_filter = "all"
         self._search_query = ""
         self._auto_index_attempted = False
+        
+        # Batch mode
+        self._is_batch_mode = False
+        self._selected_ids: set[str] = set()
         
         # Init Note Service if library root is available
         self._note_service = NoteService(Path(self._library_root)) if self._library_root else None
@@ -131,6 +136,19 @@ class DashboardView(QWidget):
         filter_layout.addWidget(self._tag_btn)
 
         filter_layout.addStretch()
+
+        # Batch Actions
+        self._batch_delete_btn = PrimaryPushButton("删除选中 (0)", self)
+        self._batch_delete_btn.setIcon(FI.DELETE)
+        self._batch_delete_btn.clicked.connect(self._batch_delete)
+        self._batch_delete_btn.hide()
+        filter_layout.addWidget(self._batch_delete_btn)
+
+        self._batch_btn = PushButton("批量管理", self)
+        self._batch_btn.setIcon(FI.EDIT)
+        self._batch_btn.clicked.connect(self._toggle_batch_mode)
+        filter_layout.addWidget(self._batch_btn)
+
         layout.addLayout(filter_layout)
 
         # Project Scroll Area
@@ -313,12 +331,17 @@ class DashboardView(QWidget):
             layout.setColumnStretch(1, 1)
             layout.setColumnStretch(2, 1)
             for idx, entry in enumerate(self._filtered_projects):
-                card = ProjectCard(entry, parent=new_container)
+                options = ProjectCardOptions(
+                    checkable=self._is_batch_mode,
+                    checked=(entry.project.id in self._selected_ids)
+                )
+                card = ProjectCard(entry, options, parent=new_container)
                 card.openRequested.connect(self.projectOpened.emit)
                 card.pinToggled.connect(self._pin_project)
                 card.manageRequested.connect(self.open_manage_project)
                 card.deleteRequested.connect(self._prompt_delete_project)
                 card.noteRequested.connect(self._open_project_note)
+                card.checkToggled.connect(self._on_card_toggled)
                 layout.addWidget(card, idx // cols, idx % cols)
             layout.setRowStretch((len(self._filtered_projects) // cols) + 1, 1)
             
@@ -327,11 +350,17 @@ class DashboardView(QWidget):
             layout.setContentsMargins(0, 0, 0, 0)
             layout.setSpacing(12)
             for entry in self._filtered_projects:
-                card = ProjectCard(entry, ProjectCardOptions(compact=True), parent=new_container)
+                options = ProjectCardOptions(
+                    compact=True,
+                    checkable=self._is_batch_mode,
+                    checked=(entry.project.id in self._selected_ids)
+                )
+                card = ProjectCard(entry, options, parent=new_container)
                 card.openRequested.connect(self.projectOpened.emit)
                 card.pinToggled.connect(self._pin_project)
                 card.manageRequested.connect(self.open_manage_project)
                 card.deleteRequested.connect(self._prompt_delete_project)
+                card.checkToggled.connect(self._on_card_toggled)
                 layout.addWidget(card)
             layout.addStretch()
             
@@ -363,6 +392,94 @@ class DashboardView(QWidget):
     def _on_view_changed(self, mode: str):
         self._view_mode = mode
         self._rebuild_grid()
+
+    # --- Batch Mode ---
+
+    def _toggle_batch_mode(self):
+        self._is_batch_mode = not self._is_batch_mode
+        if self._is_batch_mode:
+            self._batch_btn.setText("退出管理")
+            self._batch_btn.setIcon(FI.CLOSE)
+            self._batch_delete_btn.show()
+            self._selected_ids.clear()
+            self._update_batch_ui()
+            
+            self._status_btn.setEnabled(False)
+            self._time_btn.setEnabled(False)
+            self._tag_btn.setEnabled(False)
+        else:
+            self._batch_btn.setText("批量管理")
+            self._batch_btn.setIcon(FI.EDIT)
+            self._batch_delete_btn.hide()
+            self._selected_ids.clear()
+            
+            self._status_btn.setEnabled(True)
+            self._time_btn.setEnabled(True)
+            self._tag_btn.setEnabled(True)
+        
+        self._rebuild_grid()
+
+    def _on_card_toggled(self, pid: str, checked: bool):
+        if checked:
+            self._selected_ids.add(pid)
+        else:
+            self._selected_ids.discard(pid)
+        self._update_batch_ui()
+
+    def _update_batch_ui(self):
+        count = len(self._selected_ids)
+        self._batch_delete_btn.setText(f"删除选中 ({count})")
+        self._batch_delete_btn.setEnabled(count > 0)
+
+    def _batch_delete(self):
+        if not self._selected_ids:
+            return
+            
+        count = len(self._selected_ids)
+        title = "批量删除确认"
+        content = f"确定要彻底删除选中的 {count} 个项目吗？\n\n这些操作将永久删除项目文件夹及其所有内容，且不可恢复！"
+        
+        w = MessageBoxBase(self)
+        w.titleLabel = SubtitleLabel(title, w)
+        w.viewLayout.addWidget(w.titleLabel)
+        w.viewLayout.addWidget(BodyLabel(content, w))
+        w.yesButton.setText(f"删除 {count} 个项目")
+        w.cancelButton.setText("取消")
+        w.yesButton.setStyleSheet("QPushButton { background-color: #dc2626; color: white; border: none; } QPushButton:hover { background-color: #b91c1c; }")
+        
+        if w.exec():
+            success_count = 0
+            errors = []
+            
+            # Need to find entries for IDs to get paths
+            to_delete = []
+            for entry in self._all_projects:
+                if entry.project.id in self._selected_ids:
+                    to_delete.append(entry)
+            
+            for entry in to_delete:
+                try:
+                    delete_project_index(Path(self._library_root), entry.project.id)
+                    delete_project_physically(entry.project_dir)
+                    success_count += 1
+                except Exception as e:
+                    errors.append(f"{entry.project.name}: {str(e)}")
+            
+            self._selected_ids.clear()
+            self._is_batch_mode = False # Exit batch mode after delete
+            self._batch_btn.setText("批量管理")
+            self._batch_btn.setIcon(FI.EDIT)
+            self._batch_delete_btn.hide()
+            self._status_btn.setEnabled(True)
+            self._time_btn.setEnabled(True)
+            self._tag_btn.setEnabled(True)
+            
+            self.reload_projects()
+            
+            if errors:
+                self._show_warning(f"删除完成，但有 {len(errors)} 个错误:\n" + "\n".join(errors[:3]))
+            else:
+                self._show_success(f"成功删除 {success_count} 个项目")
 
     # --- Actions ---
 

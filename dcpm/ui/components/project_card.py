@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (
     QDialog,
     QScrollArea,
 )
-from qfluentwidgets import IconWidget, FluentIcon as FI
+from qfluentwidgets import IconWidget, FluentIcon as FI, CheckBox
 
 from dcpm.services.library_service import ProjectEntry
 from dcpm.ui.theme.colors import COLORS
@@ -26,6 +26,8 @@ from dcpm.ui.components.cards import ShadowCard
 @dataclass(frozen=True)
 class ProjectCardOptions:
     compact: bool = False
+    checkable: bool = False
+    checked: bool = False
 
 
 class ProjectCard(ShadowCard):
@@ -38,6 +40,7 @@ class ProjectCard(ShadowCard):
     manageRequested = pyqtSignal(object)
     deleteRequested = pyqtSignal(object)
     noteRequested = pyqtSignal(object)
+    checkToggled = pyqtSignal(str, bool)
 
     def __init__(self, entry: ProjectEntry, options: ProjectCardOptions | None = None, parent: QWidget | None = None):
         super().__init__(parent)
@@ -226,6 +229,12 @@ class ProjectCard(ShadowCard):
                 super().mousePressEvent(event)
                 return
 
+            if self._options.checkable:
+                if not isinstance(child, CheckBox):
+                    self.setChecked(not self.isChecked())
+                super().mousePressEvent(event)
+                return
+
             if self._cover_path():
                 if self._cover_preview_timer is None:
                     self._cover_preview_timer = QTimer(self)
@@ -234,6 +243,19 @@ class ProjectCard(ShadowCard):
                 self._cover_preview_timer.start(220)
 
         super().mousePressEvent(event)
+
+    def isChecked(self) -> bool:
+        if hasattr(self, '_checkbox'):
+            return self._checkbox.isChecked()
+        return False
+
+    def setChecked(self, checked: bool) -> None:
+        if hasattr(self, '_checkbox'):
+            self._checkbox.setChecked(checked)
+
+    def _on_checked_changed(self, state: int) -> None:
+        checked = (state == 2) # Qt.CheckState.Checked
+        self.checkToggled.emit(self._entry.project.id, checked)
 
     def _build(self) -> None:
         if self._options.compact:
@@ -249,6 +271,13 @@ class ProjectCard(ShadowCard):
         # 顶部：图标和编号
         top_layout = QHBoxLayout()
         
+        if self._options.checkable:
+            self._checkbox = CheckBox(parent=self)
+            self._checkbox.setChecked(self._options.checked)
+            self._checkbox.stateChanged.connect(self._on_checked_changed)
+            top_layout.addWidget(self._checkbox)
+            top_layout.addSpacing(8)
+
         # 渐变背景图标
         icon_container = QWidget()
         icon_container.setFixedSize(48, 48)
@@ -414,6 +443,12 @@ class ProjectCard(ShadowCard):
         layout.setContentsMargins(16, 12, 16, 12)
         layout.setSpacing(16)
         
+        if self._options.checkable:
+            self._checkbox = CheckBox(parent=self)
+            self._checkbox.setChecked(self._options.checked)
+            self._checkbox.stateChanged.connect(self._on_checked_changed)
+            layout.addWidget(self._checkbox)
+
         icon = IconWidget(FI.FOLDER)
         icon.setFixedSize(20, 20)
         icon.setStyleSheet(f"color: {COLORS['primary']};")
