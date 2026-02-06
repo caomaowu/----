@@ -504,33 +504,67 @@ class SharedDriveBrowser(QWidget):
         """确认文件夹关联"""
         self.service.confirm_folder(folder_id)
         
+        # 更新本地状态，不重新加载
+        self._update_folder_status(folder_id, FolderStatus.CONFIRMED)
         InfoBar.success("已确认", "文件夹关联已确认", parent=self)
-        # 重新加载数据以获取最新状态
-        self.load_data()
     
     def on_ignored(self, folder_id: int):
         """忽略文件夹"""
         self.service.ignore_folder(folder_id)
         
+        # 从列表中移除，不重新加载
+        self.all_folders = [f for f in self.all_folders if f.id != folder_id]
+        self.displayed_folders = [f for f in self.displayed_folders if f.id != folder_id]
         InfoBar.info("已忽略", "文件夹已从列表中移除", parent=self)
-        # 重新加载数据以获取最新状态
-        self.load_data()
+        self.update_stats()
+        self.render_list()
     
     def on_unconfirmed(self, folder_id: int):
         """取消确认文件夹关联"""
         self.service.unconfirm_folder(folder_id)
         
+        # 更新本地状态，不重新加载
+        self._update_folder_status(folder_id, FolderStatus.INDEXED)
         InfoBar.info("已取消确认", "文件夹已回到已索引状态", parent=self)
-        # 重新加载数据以获取最新状态
-        self.load_data()
     
     def on_deleted(self, folder_id: int):
         """删除文件夹索引"""
         self.service.delete_folder_index(folder_id)
         
+        # 从列表中移除，不重新加载
+        self.all_folders = [f for f in self.all_folders if f.id != folder_id]
+        self.displayed_folders = [f for f in self.displayed_folders if f.id != folder_id]
         InfoBar.success("已删除", "文件夹索引已删除", parent=self)
-        # 重新加载数据以获取最新状态
-        self.load_data()
+        self.update_stats()
+        self.render_list()
+    
+    def _update_folder_status(self, folder_id: int, new_status: FolderStatus):
+        """更新文件夹状态并重新渲染（不重新加载数据）"""
+        # 更新 all_folders 中的状态（创建新对象替换旧的，因为 dataclass 是 frozen）
+        new_all_folders = []
+        for f in self.all_folders:
+            if f.id == folder_id:
+                # 创建新的对象，只修改 status
+                new_f = SharedDriveFolder(
+                    id=f.id,
+                    project_id=f.project_id,
+                    root_path=f.root_path,
+                    folder_path=f.folder_path,
+                    folder_name=f.folder_name,
+                    file_count=f.file_count,
+                    total_size=f.total_size,
+                    modified_time=f.modified_time,
+                    status=new_status,
+                    match_score=f.match_score,
+                    created_at=f.created_at,
+                )
+                new_all_folders.append(new_f)
+            else:
+                new_all_folders.append(f)
+        self.all_folders = new_all_folders
+        
+        # 重新应用筛选并渲染
+        self.apply_filters()
     
     def reload(self):
         """重新加载数据"""
