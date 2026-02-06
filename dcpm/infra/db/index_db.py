@@ -117,29 +117,27 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_ext_res_project_id ON external_resources(project_id);")
     
-    # 共享盘文件索引表
+    # 共享盘文件夹索引表
     conn.execute(
         """
-        CREATE TABLE IF NOT EXISTS shared_drive_files(
+        CREATE TABLE IF NOT EXISTS shared_drive_folders(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             project_id TEXT NOT NULL,
             root_path TEXT NOT NULL,
-            file_path TEXT NOT NULL,
-            file_name TEXT NOT NULL,
-            file_size INTEGER NOT NULL DEFAULT 0,
+            folder_path TEXT NOT NULL,
+            folder_name TEXT NOT NULL,
+            file_count INTEGER NOT NULL DEFAULT 0,
+            total_size INTEGER NOT NULL DEFAULT 0,
             modified_time TEXT NOT NULL,
-            file_hash TEXT,
-            file_type TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'indexed',
             match_score INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL,
-            UNIQUE(root_path, file_path)
+            UNIQUE(root_path, folder_path)
         );
         """
     )
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_shared_drive_project_id ON shared_drive_files(project_id);")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_shared_drive_status ON shared_drive_files(status);")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_shared_drive_type ON shared_drive_files(file_type);")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_shared_folders_project_id ON shared_drive_folders(project_id);")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_shared_folders_status ON shared_drive_folders(status);")
     
     _ensure_project_columns(conn)
     conn.execute(
@@ -599,63 +597,57 @@ def check_part_number_unique(conn: sqlite3.Connection, part_number: str, exclude
     return count == 0
 
 
-# --- Shared Drive Files ---
+# --- Shared Drive Folders ---
 
-def upsert_shared_drive_file(
+def upsert_shared_drive_folder(
     conn: sqlite3.Connection,
     *,
     project_id: str,
     root_path: str,
-    file_path: str,
-    file_name: str,
-    file_size: int,
+    folder_path: str,
+    folder_name: str,
+    file_count: int,
+    total_size: int,
     modified_time: str,
-    file_hash: str | None,
-    file_type: str,
     status: str,
     match_score: int,
     created_at: str,
 ) -> None:
-    """插入或更新共享盘文件索引"""
+    """插入或更新共享盘文件夹索引"""
     conn.execute(
         """
-        INSERT INTO shared_drive_files(
-            project_id, root_path, file_path, file_name, file_size,
-            modified_time, file_hash, file_type, status, match_score, created_at
+        INSERT INTO shared_drive_folders(
+            project_id, root_path, folder_path, folder_name, file_count,
+            total_size, modified_time, status, match_score, created_at
         )
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(root_path, file_path) DO UPDATE SET
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(root_path, folder_path) DO UPDATE SET
             project_id=excluded.project_id,
-            file_size=excluded.file_size,
+            file_count=excluded.file_count,
+            total_size=excluded.total_size,
             modified_time=excluded.modified_time,
-            file_hash=excluded.file_hash,
             status=excluded.status,
             match_score=excluded.match_score;
         """,
         (
-            project_id, root_path, file_path, file_name, file_size,
-            modified_time, file_hash, file_type, status, match_score, created_at
+            project_id, root_path, folder_path, folder_name, file_count,
+            total_size, modified_time, status, match_score, created_at
         ),
     )
 
 
-def get_shared_drive_files(
+def get_shared_drive_folders(
     conn: sqlite3.Connection,
     project_id: str,
     status: str | None = None,
-    file_type: str | None = None,
 ) -> list[dict[str, Any]]:
-    """获取项目的共享盘文件列表"""
-    query = "SELECT * FROM shared_drive_files WHERE project_id = ?"
+    """获取项目的共享盘文件夹列表"""
+    query = "SELECT * FROM shared_drive_folders WHERE project_id = ?"
     params: list[Any] = [project_id]
     
     if status:
         query += " AND status = ?"
         params.append(status)
-    
-    if file_type:
-        query += " AND file_type = ?"
-        params.append(file_type)
     
     query += " ORDER BY modified_time DESC;"
     
@@ -663,33 +655,33 @@ def get_shared_drive_files(
     return [dict(r) for r in rows]
 
 
-def update_shared_drive_file_status(
+def update_shared_drive_folder_status(
     conn: sqlite3.Connection,
-    file_id: int,
+    folder_id: int,
     status: str,
 ) -> None:
-    """更新共享盘文件状态"""
+    """更新共享盘文件夹状态"""
     conn.execute(
-        "UPDATE shared_drive_files SET status = ? WHERE id = ?;",
-        (status, file_id),
+        "UPDATE shared_drive_folders SET status = ? WHERE id = ?;",
+        (status, folder_id),
     )
 
 
-def delete_shared_drive_file(conn: sqlite3.Connection, file_id: int) -> None:
-    """删除共享盘文件索引"""
-    conn.execute("DELETE FROM shared_drive_files WHERE id = ?;", (file_id,))
+def delete_shared_drive_folder(conn: sqlite3.Connection, folder_id: int) -> None:
+    """删除共享盘文件夹索引"""
+    conn.execute("DELETE FROM shared_drive_folders WHERE id = ?;", (folder_id,))
 
 
-def clear_shared_drive_files_by_root(conn: sqlite3.Connection, root_path: str) -> None:
-    """清除指定根路径下的所有文件索引（用于重新扫描）"""
+def clear_shared_drive_folders_by_root(conn: sqlite3.Connection, root_path: str) -> None:
+    """清除指定根路径下的所有文件夹索引（用于重新扫描）"""
     conn.execute(
-        "DELETE FROM shared_drive_files WHERE root_path = ?;",
+        "DELETE FROM shared_drive_folders WHERE root_path = ?;",
         (root_path,),
     )
 
 
-def get_shared_drive_stats(conn: sqlite3.Connection, project_id: str) -> dict[str, int]:
-    """获取共享盘文件统计信息"""
+def get_shared_drive_folder_stats(conn: sqlite3.Connection, project_id: str) -> dict[str, int]:
+    """获取共享盘文件夹统计信息"""
     row = conn.execute(
         """
         SELECT
@@ -697,8 +689,8 @@ def get_shared_drive_stats(conn: sqlite3.Connection, project_id: str) -> dict[st
             SUM(CASE WHEN status = 'indexed' THEN 1 ELSE 0 END) as indexed,
             SUM(CASE WHEN status = 'confirmed' THEN 1 ELSE 0 END) as confirmed,
             SUM(CASE WHEN status = 'ignored' THEN 1 ELSE 0 END) as ignored,
-            SUM(file_size) as total_size
-        FROM shared_drive_files
+            SUM(total_size) as total_size
+        FROM shared_drive_folders
         WHERE project_id = ?;
         """,
         (project_id,),
@@ -712,16 +704,12 @@ def get_shared_drive_stats(conn: sqlite3.Connection, project_id: str) -> dict[st
     }
 
 
-def get_shared_drive_file_types(conn: sqlite3.Connection, project_id: str) -> list[str]:
-    """获取项目的所有文件类型"""
-    rows = conn.execute(
-        """
-        SELECT DISTINCT file_type
-        FROM shared_drive_files
-        WHERE project_id = ? AND status != 'ignored'
-        ORDER BY file_type;
-        """,
-        (project_id,),
-    ).fetchall()
-    return [str(r["file_type"]) for r in rows]
+# --- 向后兼容的别名 ---
+upsert_shared_drive_file = upsert_shared_drive_folder
+get_shared_drive_files = get_shared_drive_folders
+update_shared_drive_file_status = update_shared_drive_folder_status
+delete_shared_drive_file = delete_shared_drive_folder
+clear_shared_drive_files_by_root = clear_shared_drive_folders_by_root
+get_shared_drive_stats = get_shared_drive_folder_stats
+get_shared_drive_file_types = lambda conn, project_id: []  # 文件夹模式下无文件类型
 

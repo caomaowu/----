@@ -51,7 +51,7 @@ class FileBrowser(QWidget):
         # Pivot (Tabs)
         self.pivot = Pivot(self)
         self.pivot.addItem("files", "项目文件")
-        self.pivot.addItem("shared", "共享盘文件")
+        self.pivot.addItem("shared", "共享盘文件夹")
         self.pivot.addItem("inspection", "探伤记录")
         self.pivot.currentItemChanged.connect(self._on_pivot_changed)
         self._layout.addWidget(self.pivot)

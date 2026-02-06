@@ -97,14 +97,14 @@ class SettingsInterface(ScrollArea):
         self.resource_group.addSettingCard(self.shared_path_card)
         self.resource_group.addSettingCard(self.scan_card)
         
-        # 共享盘文件索引组
-        self.file_index_group = SettingCardGroup("共享盘文件索引", self.scrollWidget)
+        # 共享盘文件夹索引组
+        self.file_index_group = SettingCardGroup("共享盘文件夹索引", self.scrollWidget)
         
-        # 共享盘文件路径（可复用探伤报告路径或单独设置）
+        # 共享盘文件夹路径（可复用探伤报告路径或单独设置）
         self.file_index_path_card = LineEditSettingCard(
             FI.FOLDER,
             "共享盘根目录",
-            "设置共享盘的根目录路径，用于索引项目相关文件",
+            "设置共享盘的根目录路径，用于索引项目相关文件夹",
             self.file_index_group
         )
         self.file_index_path_card.lineEdit.setPlaceholderText(r"例如: \\192.168.1.100\Engineering")
@@ -114,8 +114,8 @@ class SettingsInterface(ScrollArea):
         self.file_index_scan_card = PrimaryPushSettingCard(
             "开始索引",
             FI.SEARCH,
-            "索引共享盘文件",
-            "扫描共享盘并自动关联与项目相关的文件",
+            "索引共享盘文件夹",
+            "扫描共享盘并自动关联与项目相关的文件夹",
             self.file_index_group
         )
         self.file_index_scan_card.clicked.connect(self._start_file_index_scan)
@@ -204,7 +204,7 @@ class SettingsInterface(ScrollArea):
         )
     
     def _start_file_index_scan(self):
-        """开始共享盘文件索引扫描"""
+        """开始共享盘文件夹索引扫描"""
         cfg = load_user_config()
         if not cfg.library_root:
             InfoBar.warning(
@@ -258,7 +258,7 @@ class SettingsInterface(ScrollArea):
         self.file_index_scan_card.button.setText("开始索引")
         InfoBar.success(
             title="索引完成",
-            content=f"已成功索引 {count} 个文件",
+            content=f"已成功索引 {count} 个文件夹",
             parent=self,
             duration=3000
         )

@@ -19,13 +19,13 @@ from qfluentwidgets import (
     IndeterminateProgressRing, ToolButton
 )
 
-from dcpm.domain.shared_drive_file import SharedDriveFile, FileStatus
+from dcpm.domain.shared_drive_file import SharedDriveFolder, FolderStatus
 from dcpm.ui.theme.colors import COLORS
 from dcpm.services.shared_drive_service import SharedDriveService
 
 
-class FileLoader(QThread):
-    """异步加载共享盘文件的 Worker"""
+class FolderLoader(QThread):
+    """异步加载共享盘文件夹的 Worker"""
     loaded = pyqtSignal(list)
     
     def __init__(self, library_root: Path, project_id: str):
@@ -35,12 +35,12 @@ class FileLoader(QThread):
         
     def run(self):
         service = SharedDriveService(self.library_root)
-        files = service.get_project_files(self.project_id)
+        folders = service.get_project_folders(self.project_id)
         # 过滤掉已忽略的
-        valid_files = [f for f in files if f.status != FileStatus.IGNORED]
+        valid_folders = [f for f in folders if f.status != FolderStatus.IGNORED]
         # 按修改时间降序
-        valid_files.sort(key=lambda f: f.modified_time, reverse=True)
-        self.loaded.emit(valid_files)
+        valid_folders.sort(key=lambda f: f.modified_time, reverse=True)
+        self.loaded.emit(valid_folders)
 
 
 class ScanWorker(QThread):
@@ -55,7 +55,6 @@ class ScanWorker(QThread):
         self.project_id = project_id
         
     def run(self):
-        from dcpm.services.library_service import ProjectEntry
         from dcpm.infra.fs.metadata import load_project
         
         # 加载项目信息
@@ -73,7 +72,7 @@ class ScanWorker(QThread):
         self.finished.emit(count)
 
 
-class FileToolbar(QWidget):
+class FolderToolbar(QWidget):
     """顶部工具栏"""
     filterChanged = pyqtSignal()
     scanRequested = pyqtSignal()
@@ -86,7 +85,7 @@ class FileToolbar(QWidget):
         
         # 搜索框
         self.search_edit = SearchLineEdit(self)
-        self.search_edit.setPlaceholderText("搜索文件名...")
+        self.search_edit.setPlaceholderText("搜索文件夹...")
         self.search_edit.setFixedWidth(200)
         self.search_edit.textChanged.connect(self.filterChanged)
         self.layout.addWidget(self.search_edit)
@@ -97,13 +96,6 @@ class FileToolbar(QWidget):
         self.status_combo.setFixedWidth(100)
         self.status_combo.currentTextChanged.connect(self.filterChanged)
         self.layout.addWidget(self.status_combo)
-        
-        # 文件类型筛选
-        self.type_combo = ComboBox(self)
-        self.type_combo.addItem("全部类型")
-        self.type_combo.setFixedWidth(100)
-        self.type_combo.currentTextChanged.connect(self.filterChanged)
-        self.layout.addWidget(self.type_combo)
         
         self.layout.addStretch()
         
@@ -123,29 +115,19 @@ class FileToolbar(QWidget):
         elif text == "已确认":
             return "confirmed"
         return None
-    
-    def set_file_types(self, types: List[str]):
-        current = self.type_combo.currentText()
-        self.type_combo.blockSignals(True)
-        self.type_combo.clear()
-        self.type_combo.addItem("全部类型")
-        for t in sorted(types):
-            self.type_combo.addItem(t)
-        
-        if current in ["全部类型"] + types:
-            self.type_combo.setCurrentText(current)
-        self.type_combo.blockSignals(False)
 
 
-class FileNode(CardWidget):
-    """文件节点卡片"""
+class FolderNode(CardWidget):
+    """文件夹节点卡片"""
     confirmed = pyqtSignal(int)
     ignored = pyqtSignal(int)
+    unconfirmed = pyqtSignal(int)  # 取消确认
+    deleted = pyqtSignal(int)      # 删除索引
     opened = pyqtSignal(str)  # 发送完整路径
     
-    def __init__(self, file: SharedDriveFile, root_path: str, parent=None):
+    def __init__(self, folder: SharedDriveFolder, root_path: str, parent=None):
         super().__init__(parent)
-        self.file = file
+        self.folder = folder
         self.root_path = root_path
         self.setFixedHeight(70)
         self.setupUI()
@@ -155,22 +137,15 @@ class FileNode(CardWidget):
         layout.setContentsMargins(16, 8, 16, 8)
         layout.setSpacing(16)
         
-        # 左侧：文件类型图标
-        type_col = QVBoxLayout()
-        type_col.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # 左侧：文件夹图标
+        icon_col = QVBoxLayout()
+        icon_col.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
-        type_label = QLabel(self.file.file_type, self)
-        type_label.setStyleSheet(f"""
-            color: {COLORS['primary']};
-            font-size: 11px;
-            font-weight: bold;
-            background: {COLORS['primary']}15;
-            padding: 4px 8px;
-            border-radius: 4px;
-        """)
-        type_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        type_col.addWidget(type_label)
-        layout.addLayout(type_col)
+        icon_label = QLabel("📁", self)
+        icon_label.setStyleSheet("font-size: 24px;")
+        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon_col.addWidget(icon_label)
+        layout.addLayout(icon_col)
         
         # 分隔线
         line = QFrame()
@@ -178,48 +153,50 @@ class FileNode(CardWidget):
         line.setStyleSheet(f"color: {COLORS['border']};")
         layout.addWidget(line)
         
-        # 中间：文件信息
+        # 中间：文件夹信息
         info_col = QVBoxLayout()
         info_col.setSpacing(4)
         info_col.setAlignment(Qt.AlignmentFlag.AlignVCenter)
         
-        # 文件名行
+        # 文件夹名行
         name_row = QHBoxLayout()
         name_row.setSpacing(8)
         
-        name_label = SubtitleLabel(self.file.file_name, self)
-        name_label.setToolTip(self.file.file_path)
+        name_label = SubtitleLabel(self.folder.folder_name, self)
+        name_label.setToolTip(self.folder.folder_path)
         name_row.addWidget(name_label)
         
         # 状态标签
-        if self.file.status == FileStatus.CONFIRMED:
+        if self.folder.status == FolderStatus.CONFIRMED:
             status_tag = PillToolButton("已确认", self)
             status_tag.setIcon(FI.ACCEPT)
             status_tag.setChecked(True)
             status_tag.setStyleSheet(f"background-color: {COLORS['success']}; color: white; border: none;")
         else:
-            status_tag = PillToolButton(f"匹配度: {self.file.match_score}", self)
+            status_tag = PillToolButton(f"匹配度: {self.folder.match_score}", self)
             status_tag.setIcon(FI.LINK)
             status_tag.setStyleSheet(f"color: {COLORS['info']}; border: 1px solid {COLORS['info']}; background: transparent;")
         name_row.addWidget(status_tag)
         name_row.addStretch()
         info_col.addLayout(name_row)
         
-        # 路径和大小行
+        # 路径和统计行
         meta_row = QHBoxLayout()
         meta_row.setSpacing(12)
         
-        path_label = CaptionLabel(self.file.file_path, self)
+        path_label = CaptionLabel(self.folder.folder_path, self)
         path_label.setStyleSheet(f"color: {COLORS['text_muted']};")
         meta_row.addWidget(path_label)
         
         meta_row.addStretch()
         
-        size_label = CaptionLabel(self.file.size_human, self)
-        size_label.setStyleSheet(f"color: {COLORS['text_muted']};")
-        meta_row.addWidget(size_label)
+        # 显示文件数量和大小
+        stats_text = f"{self.folder.file_count} 个文件 | {self.folder.size_human}"
+        stats_label = CaptionLabel(stats_text, self)
+        stats_label.setStyleSheet(f"color: {COLORS['text_muted']};")
+        meta_row.addWidget(stats_label)
         
-        time_str = self.file.modified_time.strftime("%m-%d %H:%M")
+        time_str = self.folder.modified_time.strftime("%m-%d %H:%M")
         time_label = CaptionLabel(time_str, self)
         time_label.setStyleSheet(f"color: {COLORS['text_muted']};")
         meta_row.addWidget(time_label)
@@ -231,46 +208,75 @@ class FileNode(CardWidget):
         action_row = QHBoxLayout()
         action_row.setSpacing(4)
         
-        open_btn = TransparentToolButton(FI.DOCUMENT, self)
-        open_btn.setToolTip("打开文件")
-        open_btn.clicked.connect(self._open_file)
+        open_btn = TransparentToolButton(FI.FOLDER, self)
+        open_btn.setToolTip("打开文件夹")
+        open_btn.clicked.connect(self._open_folder)
         action_row.addWidget(open_btn)
         
-        folder_btn = TransparentToolButton(FI.FOLDER, self)
-        folder_btn.setToolTip("打开所在文件夹")
-        folder_btn.clicked.connect(self._open_folder)
-        action_row.addWidget(folder_btn)
-        
-        if self.file.status != FileStatus.CONFIRMED:
+        if self.folder.status == FolderStatus.CONFIRMED:
+            # 已确认的文件夹：显示取消确认和删除索引按钮
+            unconfirm_btn = TransparentToolButton(FI.CANCEL, self)
+            unconfirm_btn.setToolTip("取消确认")
+            unconfirm_btn.setIconSize(QSize(18, 18))
+            unconfirm_btn.setStyleSheet(f"color: {COLORS['warning']}")
+            unconfirm_btn.clicked.connect(lambda: self.unconfirmed.emit(self.folder.id))
+            action_row.addWidget(unconfirm_btn)
+            
+            delete_btn = TransparentToolButton(FI.DELETE, self)
+            delete_btn.setToolTip("删除索引")
+            delete_btn.setIconSize(QSize(18, 18))
+            delete_btn.setStyleSheet(f"color: {COLORS['error']}")
+            delete_btn.clicked.connect(lambda: self.deleted.emit(self.folder.id))
+            action_row.addWidget(delete_btn)
+        else:
+            # 未确认的文件夹：显示确认和忽略按钮
             confirm_btn = TransparentToolButton(FI.ACCEPT, self)
             confirm_btn.setToolTip("确认关联")
             confirm_btn.setIconSize(QSize(18, 18))
             confirm_btn.setStyleSheet(f"color: {COLORS['success']}")
-            confirm_btn.clicked.connect(lambda: self.confirmed.emit(self.file.id))
+            confirm_btn.clicked.connect(lambda: self.confirmed.emit(self.folder.id))
             action_row.addWidget(confirm_btn)
             
             ignore_btn = TransparentToolButton(FI.CLOSE, self)
             ignore_btn.setToolTip("忽略")
             ignore_btn.setIconSize(QSize(18, 18))
             ignore_btn.setStyleSheet(f"color: {COLORS['error']}")
-            ignore_btn.clicked.connect(lambda: self.ignored.emit(self.file.id))
+            ignore_btn.clicked.connect(lambda: self.ignored.emit(self.folder.id))
             action_row.addWidget(ignore_btn)
         
         layout.addLayout(action_row)
     
-    def _open_file(self):
-        full_path = Path(self.root_path) / self.file.file_path
-        if full_path.exists():
-            QDesktopServices.openUrl(QUrl.fromLocalFile(str(full_path)))
-    
     def _open_folder(self):
-        full_path = Path(self.root_path) / self.file.file_path
-        folder = full_path.parent
-        if folder.exists():
+        # 使用文件夹自己的 root_path
+        root_path = self.folder.root_path
+        
+        if not root_path:
+            InfoBar.warning(
+                title="无法打开文件夹",
+                content="未配置共享盘路径，请在设置中配置",
+                parent=self
+            )
+            return
+        
+        full_path = Path(root_path) / self.folder.folder_path
+        if full_path.exists():
             try:
-                os.startfile(str(folder))
+                os.startfile(str(full_path))
             except Exception:
-                subprocess.Popen(f'explorer "{folder}"')
+                try:
+                    subprocess.Popen(f'explorer "{full_path}"')
+                except Exception as e:
+                    InfoBar.error(
+                        title="打开文件夹失败",
+                        content=str(e),
+                        parent=self
+                    )
+        else:
+            InfoBar.warning(
+                title="文件夹不存在",
+                content=f"路径: {full_path}",
+                parent=self
+            )
 
 
 class EmptyWidget(QWidget):
@@ -292,7 +298,7 @@ class EmptyWidget(QWidget):
 
 
 class SharedDriveBrowser(QWidget):
-    """共享盘文件浏览器主视图"""
+    """共享盘文件夹浏览器主视图"""
     
     def __init__(
         self,
@@ -306,8 +312,8 @@ class SharedDriveBrowser(QWidget):
         self.project_id = project_id
         self.shared_drive_path = shared_drive_path or ""
         
-        self.all_files: List[SharedDriveFile] = []
-        self.displayed_files: List[SharedDriveFile] = []
+        self.all_folders: List[SharedDriveFolder] = []
+        self.displayed_folders: List[SharedDriveFolder] = []
         
         self.service = SharedDriveService(library_root)
         
@@ -320,7 +326,7 @@ class SharedDriveBrowser(QWidget):
         self.main_layout.setSpacing(0)
         
         # 工具栏
-        self.toolbar = FileToolbar(self)
+        self.toolbar = FolderToolbar(self)
         self.toolbar.filterChanged.connect(self.apply_filters)
         self.toolbar.scanRequested.connect(self.start_scan)
         self.main_layout.addWidget(self.toolbar)
@@ -349,7 +355,7 @@ class SharedDriveBrowser(QWidget):
         self.loading_ring.hide()
         
         # 空状态
-        self.empty_widget = EmptyWidget('点击右上角"扫描共享盘"开始索引文件', self)
+        self.empty_widget = EmptyWidget('点击右上角"扫描共享盘"开始索引文件夹', self)
         self.empty_widget.hide()
         self.main_layout.addWidget(self.empty_widget)
     
@@ -361,25 +367,21 @@ class SharedDriveBrowser(QWidget):
         )
     
     def load_data(self):
-        """加载文件数据"""
+        """加载文件夹数据"""
         self.loading_ring.show()
         self.loading_ring.start()
         self.scroll_widget.hide()
         
-        self.loader = FileLoader(self.library_root, self.project_id)
+        self.loader = FolderLoader(self.library_root, self.project_id)
         self.loader.loaded.connect(self.on_data_loaded)
         self.loader.start()
     
-    def on_data_loaded(self, files: List[SharedDriveFile]):
+    def on_data_loaded(self, folders: List[SharedDriveFolder]):
         self.loading_ring.stop()
         self.loading_ring.hide()
         self.scroll_widget.show()
         
-        self.all_files = files
-        
-        # 更新文件类型下拉框
-        file_types = list(set(f.file_type for f in files))
-        self.toolbar.set_file_types(file_types)
+        self.all_folders = folders
         
         # 更新统计
         self.update_stats()
@@ -388,15 +390,15 @@ class SharedDriveBrowser(QWidget):
         self.apply_filters()
         
         # 如果没有数据，显示空状态
-        if not files and not self.shared_drive_path:
+        if not folders and not self.shared_drive_path:
             self.scroll_widget.hide()
             self.empty_widget.show()
     
     def update_stats(self):
         """更新统计信息"""
-        total = len(self.all_files)
-        confirmed = sum(1 for f in self.all_files if f.status == FileStatus.CONFIRMED)
-        total_size = sum(f.file_size for f in self.all_files)
+        total = len(self.all_folders)
+        confirmed = sum(1 for f in self.all_folders if f.status == FolderStatus.CONFIRMED)
+        total_size = sum(f.total_size for f in self.all_folders)
         
         # 格式化总大小
         size_str = ""
@@ -407,54 +409,51 @@ class SharedDriveBrowser(QWidget):
         else:
             size_str = f"{total_size / (1024 * 1024 * 1024):.1f} GB"
         
-        self.stats_label.setText(f"共 {total} 个文件 | 已确认 {confirmed} 个 | 总计 {size_str}")
+        self.stats_label.setText(f"共 {total} 个文件夹 | 已确认 {confirmed} 个 | 总计 {size_str}")
     
     def apply_filters(self):
         """应用筛选条件"""
         search_text = self.toolbar.get_search_text()
         status_filter = self.toolbar.get_status_filter()
-        type_filter = self.toolbar.type_combo.currentText()
         
         filtered = []
-        for f in self.all_files:
+        for f in self.all_folders:
             # 搜索筛选
             if search_text:
-                if search_text not in f.file_name.lower() and search_text not in f.file_path.lower():
+                if search_text not in f.folder_name.lower() and search_text not in f.folder_path.lower():
                     continue
             
             # 状态筛选
             if status_filter and f.status.value != status_filter:
                 continue
             
-            # 类型筛选
-            if type_filter != "全部类型" and f.file_type != type_filter:
-                continue
-            
             filtered.append(f)
         
-        self.displayed_files = filtered
+        self.displayed_folders = filtered
         self.render_list()
     
     def render_list(self):
-        """渲染文件列表"""
+        """渲染文件夹列表"""
         # 清除旧内容
         while self.scroll_layout.count():
             item = self.scroll_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
         
-        if not self.displayed_files:
-            empty_label = QLabel("没有找到匹配的文件", self.scroll_widget)
+        if not self.displayed_folders:
+            empty_label = QLabel("没有找到匹配的文件夹", self.scroll_widget)
             empty_label.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 14px; margin-top: 40px;")
             empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.scroll_layout.addWidget(empty_label)
             return
         
-        # 渲染文件节点
-        for file in self.displayed_files:
-            node = FileNode(file, self.shared_drive_path, self.scroll_widget)
+        # 渲染文件夹节点
+        for folder in self.displayed_folders:
+            node = FolderNode(folder, self.shared_drive_path, self.scroll_widget)
             node.confirmed.connect(self.on_confirmed)
             node.ignored.connect(self.on_ignored)
+            node.unconfirmed.connect(self.on_unconfirmed)
+            node.deleted.connect(self.on_deleted)
             self.scroll_layout.addWidget(node)
         
         self.scroll_layout.addStretch()
@@ -493,7 +492,7 @@ class SharedDriveBrowser(QWidget):
         
         InfoBar.success(
             title="扫描完成",
-            content=f"共索引 {count} 个文件",
+            content=f"共索引 {count} 个文件夹",
             parent=self
         )
         
@@ -501,30 +500,37 @@ class SharedDriveBrowser(QWidget):
         self.empty_widget.hide()
         self.load_data()
     
-    def on_confirmed(self, file_id: int):
-        """确认文件关联"""
-        self.service.confirm_file(file_id)
+    def on_confirmed(self, folder_id: int):
+        """确认文件夹关联"""
+        self.service.confirm_folder(folder_id)
         
-        # 更新本地状态
-        for f in self.all_files:
-            if f.id == file_id:
-                f.status = FileStatus.CONFIRMED
-                break
-        
-        InfoBar.success("已确认", "文件关联已确认", parent=self)
-        self.update_stats()
-        self.apply_filters()
+        InfoBar.success("已确认", "文件夹关联已确认", parent=self)
+        # 重新加载数据以获取最新状态
+        self.load_data()
     
-    def on_ignored(self, file_id: int):
-        """忽略文件"""
-        self.service.ignore_file(file_id)
+    def on_ignored(self, folder_id: int):
+        """忽略文件夹"""
+        self.service.ignore_folder(folder_id)
         
-        # 从列表中移除
-        self.all_files = [f for f in self.all_files if f.id != file_id]
+        InfoBar.info("已忽略", "文件夹已从列表中移除", parent=self)
+        # 重新加载数据以获取最新状态
+        self.load_data()
+    
+    def on_unconfirmed(self, folder_id: int):
+        """取消确认文件夹关联"""
+        self.service.unconfirm_folder(folder_id)
         
-        InfoBar.info("已忽略", "文件已从列表中移除", parent=self)
-        self.update_stats()
-        self.apply_filters()
+        InfoBar.info("已取消确认", "文件夹已回到已索引状态", parent=self)
+        # 重新加载数据以获取最新状态
+        self.load_data()
+    
+    def on_deleted(self, folder_id: int):
+        """删除文件夹索引"""
+        self.service.delete_folder_index(folder_id)
+        
+        InfoBar.success("已删除", "文件夹索引已删除", parent=self)
+        # 重新加载数据以获取最新状态
+        self.load_data()
     
     def reload(self):
         """重新加载数据"""
