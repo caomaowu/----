@@ -124,6 +124,7 @@ class FolderNode(CardWidget):
     unconfirmed = pyqtSignal(int)  # 取消确认
     deleted = pyqtSignal(int)      # 删除索引
     opened = pyqtSignal(str)  # 发送完整路径
+    browseRequested = pyqtSignal(str) # 请求在应用内浏览
     
     def __init__(self, folder: SharedDriveFolder, root_path: str, parent=None):
         super().__init__(parent)
@@ -208,6 +209,11 @@ class FolderNode(CardWidget):
         action_row = QHBoxLayout()
         action_row.setSpacing(4)
         
+        browse_btn = TransparentToolButton(FI.VIEW, self)
+        browse_btn.setToolTip("在应用内浏览")
+        browse_btn.clicked.connect(self._request_browse)
+        action_row.addWidget(browse_btn)
+
         open_btn = TransparentToolButton(FI.FOLDER, self)
         open_btn.setToolTip("打开文件夹")
         open_btn.clicked.connect(self._open_folder)
@@ -278,6 +284,16 @@ class FolderNode(CardWidget):
                 parent=self
             )
 
+    def _request_browse(self):
+        root_path = self.folder.root_path
+        if not root_path:
+             InfoBar.warning(title="无法浏览", content="未配置共享盘路径", parent=self)
+             return
+             
+        full_path = Path(root_path) / self.folder.folder_path
+        self.browseRequested.emit(str(full_path))
+
+
 
 class EmptyWidget(QWidget):
     """空状态提示"""
@@ -299,6 +315,7 @@ class EmptyWidget(QWidget):
 
 class SharedDriveBrowser(QWidget):
     """共享盘文件夹浏览器主视图"""
+    browseRequested = pyqtSignal(str)
     
     def __init__(
         self,
@@ -454,6 +471,7 @@ class SharedDriveBrowser(QWidget):
             node.ignored.connect(self.on_ignored)
             node.unconfirmed.connect(self.on_unconfirmed)
             node.deleted.connect(self.on_deleted)
+            node.browseRequested.connect(self.browseRequested)
             self.scroll_layout.addWidget(node)
         
         self.scroll_layout.addStretch()

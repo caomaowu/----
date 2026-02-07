@@ -300,12 +300,9 @@ class DashboardView(QWidget):
                 if self._tag_filter not in entry.project.tags:
                     continue
 
-            # 3. Search Query
-            if q:
-                text = f"{entry.project.id} {entry.project.name} {entry.project.customer} {' '.join(entry.project.tags)}".lower()
-                if q not in text:
-                    continue
-
+            # 3. Search Query - Handled by Backend now
+            # We trust _all_projects contains the relevant search results
+            
             # 4. Archive Hiding
             if entry.project.status == "archived":
                 if self._status_filter != "status:archived":

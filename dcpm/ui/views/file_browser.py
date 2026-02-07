@@ -47,8 +47,8 @@ class FileBrowser(QWidget):
         self._item_tags: dict[str, list[str]] = {}
         
         # Inspection Browsing State
-        self.is_browsing_inspection = False
-        self.inspection_root: Path | None = None
+        self.browsing_mode = "none" # "none", "inspection", "shared"
+        self.external_root: Path | None = None
         
         # Layout
         self._layout = QVBoxLayout(self)
@@ -242,8 +242,8 @@ class FileBrowser(QWidget):
 
         self.file_view_layout.addWidget(self.list_view)
 
-    def browse_inspection(self, path: str):
-        """Enter immersive browsing mode for inspection folder"""
+    def browse_external_folder(self, path: str, source: str = "inspection"):
+        """Enter immersive browsing mode for external folder (inspection or shared)"""
         target_path = Path(path)
         if not target_path.exists():
             InfoBar.error(
@@ -253,8 +253,8 @@ class FileBrowser(QWidget):
             )
             return
             
-        self.is_browsing_inspection = True
-        self.inspection_root = target_path
+        self.browsing_mode = source
+        self.external_root = target_path
         self.current_root = target_path
         
         # Switch to File View (Page 0)
@@ -267,17 +267,23 @@ class FileBrowser(QWidget):
         # Update Breadcrumbs
         self._update_breadcrumbs(target_path)
         
-        # Update Pivot selection without triggering signal (to avoid loop or reset)
+        # Update Pivot selection without triggering signal
         self.pivot.blockSignals(True)
         self.pivot.setCurrentItem("files")
         self.pivot.blockSignals(False)
+
+    def browse_inspection(self, path: str):
+        self.browse_external_folder(path, "inspection")
+        
+    def browse_shared(self, path: str):
+        self.browse_external_folder(path, "shared")
 
     def set_root(self, path: Path, project_name: str = "", project_id: str = ""):
         """Entry point: Navigate to a project folder"""
         if not path or not path.exists():
             return
             
-        self.is_browsing_inspection = False
+        self.browsing_mode = "none"
         self.current_root = path
         self.project_root = path
         self.project_name = project_name
@@ -297,6 +303,7 @@ class FileBrowser(QWidget):
                 self.project_id,
                 parent=self
             )
+            self.shared_drive_view.browseRequested.connect(self.browse_shared)
             self.stack.addWidget(self.shared_drive_view)
         
         # Re-init timeline
@@ -381,8 +388,11 @@ class FileBrowser(QWidget):
         
         # Determine Root Label
         root_label = self.project_name or self.current_root.name
-        if self.is_browsing_inspection and self.inspection_root:
-             root_label = f"探伤记录: {self.inspection_root.name}"
+        
+        if self.browsing_mode == "inspection" and self.external_root:
+             root_label = f"探伤记录: {self.external_root.name}"
+        elif self.browsing_mode == "shared" and self.external_root:
+             root_label = f"共享盘: {self.external_root.name}"
         
         # Add "Root" item
         self.breadcrumb.addItem(root_label, str(self.current_root))
@@ -425,10 +435,15 @@ class FileBrowser(QWidget):
         current_idx = self.list_view.rootIndex()
         current_path = Path(self.model.filePath(current_idx))
         
-        # Inspection Browsing Return Logic
-        if self.is_browsing_inspection and self.inspection_root and current_path == self.inspection_root:
-            self.is_browsing_inspection = False
-            self.inspection_root = None
+        # External Browsing Return Logic
+        if self.browsing_mode != "none" and self.external_root and current_path == self.external_root:
+            
+            # Determine return tab
+            return_tab = "inspection" if self.browsing_mode == "inspection" else "shared"
+            
+            # Reset State
+            self.browsing_mode = "none"
+            self.external_root = None
             
             # Restore to Project Root
             if self.project_root:
@@ -438,8 +453,8 @@ class FileBrowser(QWidget):
                 self.list_view.setRootIndex(root_idx)
                 self._update_breadcrumbs(self.project_root)
             
-            # Switch back to Inspection Tab
-            self.pivot.setCurrentItem("inspection")
+            # Switch back to Tab
+            self.pivot.setCurrentItem(return_tab)
             return
         
         if self.current_root and current_path == self.current_root:
