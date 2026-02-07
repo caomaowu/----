@@ -199,7 +199,7 @@ class SharedDriveService:
     
     def scan_and_index(
         self,
-        shared_drive_path: str,
+        shared_drive_paths: str | list[str],
         target_project: Project | None = None,
         min_match_score: int = 30,  # 最小匹配分数
     ) -> int:
@@ -207,78 +207,89 @@ class SharedDriveService:
         扫描共享盘并建立文件夹索引
         
         Args:
-            shared_drive_path: 共享盘根路径
+            shared_drive_paths: 共享盘根路径 (支持单个路径或路径列表)
             target_project: 如果指定，只索引匹配该项目的文件夹；否则索引所有项目
             min_match_score: 最小匹配分数，低于此值的文件夹不会被索引
             
         Returns:
             新增/更新的索引数量
         """
-        scanner = SharedDriveScanner(shared_drive_path)
-        
+        if isinstance(shared_drive_paths, str):
+            root_paths = [shared_drive_paths]
+        else:
+            root_paths = shared_drive_paths
+
         db = open_index_db(self.library_root)
         conn = connect(db)
         
         indexed_count = 0
         now_str = datetime.now().isoformat(timespec="seconds")
         
+        # 预加载项目信息（全库模式）
+        projects = []
+        matchers = {}
+        if not target_project:
+            entries = list_projects(self.library_root)
+            # 过滤掉特殊项目，不参与索引
+            projects = [e.project for e in entries if not getattr(e.project, 'is_special', False)]
+            matchers = {p.id: FolderMatcher(p) for p in projects}
+        
         try:
-            if target_project:
-                # 单项目模式：只为指定项目索引匹配的文件夹
-                matcher = FolderMatcher(target_project)
+            for shared_drive_path in root_paths:
+                scanner = SharedDriveScanner(shared_drive_path)
                 
-                for scan_result in scanner.scan():
-                    score = matcher.match(scan_result.folder_name)
+                if target_project:
+                    # 单项目模式：只为指定项目索引匹配的文件夹
+                    matcher = FolderMatcher(target_project)
                     
-                    # 只索引匹配度 >= min_match_score 的文件夹
-                    if score >= min_match_score:
-                        upsert_shared_drive_folder(
-                            conn,
-                            project_id=target_project.id,
-                            root_path=shared_drive_path,
-                            folder_path=scan_result.folder_path,
-                            folder_name=scan_result.folder_name,
-                            file_count=scan_result.file_count,
-                            total_size=scan_result.total_size,
-                            modified_time=scan_result.modified_time.isoformat(),
-                            status="indexed",
-                            match_score=score,
-                            created_at=now_str,
-                        )
-                        indexed_count += 1
-            else:
-                # 全库模式：为所有项目索引文件夹
-                entries = list_projects(self.library_root)
-                projects = [e.project for e in entries]
-                matchers = {p.id: FolderMatcher(p) for p in projects}
-                
-                for scan_result in scanner.scan():
-                    best_score = 0
-                    best_project_id = None
-                    
-                    # 找到最匹配的项目
-                    for project in projects:
-                        score = matchers[project.id].match(scan_result.folder_name)
-                        if score > best_score:
-                            best_score = score
-                            best_project_id = project.id
-                    
-                    # 只索引匹配度 >= min_match_score 的文件夹
-                    if best_score >= min_match_score and best_project_id:
-                        upsert_shared_drive_folder(
-                            conn,
-                            project_id=best_project_id,
-                            root_path=shared_drive_path,
-                            folder_path=scan_result.folder_path,
-                            folder_name=scan_result.folder_name,
-                            file_count=scan_result.file_count,
-                            total_size=scan_result.total_size,
-                            modified_time=scan_result.modified_time.isoformat(),
-                            status="indexed",
-                            match_score=best_score,
-                            created_at=now_str,
-                        )
-                        indexed_count += 1
+                    for scan_result in scanner.scan():
+                        score = matcher.match(scan_result.folder_name)
+                        
+                        # 只索引匹配度 >= min_match_score 的文件夹
+                        if score >= min_match_score:
+                            upsert_shared_drive_folder(
+                                conn,
+                                project_id=target_project.id,
+                                root_path=shared_drive_path,
+                                folder_path=scan_result.folder_path,
+                                folder_name=scan_result.folder_name,
+                                file_count=scan_result.file_count,
+                                total_size=scan_result.total_size,
+                                modified_time=scan_result.modified_time.isoformat(),
+                                status="indexed",
+                                match_score=score,
+                                created_at=now_str,
+                            )
+                            indexed_count += 1
+                else:
+                    # 全库模式：为所有项目索引文件夹
+                    for scan_result in scanner.scan():
+                        best_score = 0
+                        best_project_id = None
+                        
+                        # 找到最匹配的项目
+                        for project in projects:
+                            score = matchers[project.id].match(scan_result.folder_name)
+                            if score > best_score:
+                                best_score = score
+                                best_project_id = project.id
+                        
+                        # 只索引匹配度 >= min_match_score 的文件夹
+                        if best_score >= min_match_score and best_project_id:
+                            upsert_shared_drive_folder(
+                                conn,
+                                project_id=best_project_id,
+                                root_path=shared_drive_path,
+                                folder_path=scan_result.folder_path,
+                                folder_name=scan_result.folder_name,
+                                file_count=scan_result.file_count,
+                                total_size=scan_result.total_size,
+                                modified_time=scan_result.modified_time.isoformat(),
+                                status="indexed",
+                                match_score=best_score,
+                                created_at=now_str,
+                            )
+                            indexed_count += 1
             
             conn.commit()
         finally:

@@ -52,6 +52,7 @@ def read_project_metadata(path: Path) -> Project:
         item_tags=item_tags,
         description=data.get("description"),
         cover_image=cover_image,
+        is_special=bool(data.get("is_special", False)),
     )
 
 
@@ -65,6 +66,7 @@ def update_project_metadata(
     description: str | None = None,
     cover_image: str | None = None,
     part_number: str | None = None,
+    is_special: bool | None = None,
 ) -> Project:
     old = read_project_metadata(path)
     cover_value = old.cover_image
@@ -82,6 +84,7 @@ def update_project_metadata(
         item_tags=item_tags if item_tags is not None else old.item_tags,
         description=description if description is not None else old.description,
         cover_image=cover_value,
+        is_special=is_special if is_special is not None else old.is_special,
     )
     write_project_metadata(path, new)
     return new

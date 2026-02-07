@@ -297,7 +297,8 @@ def scan_and_link_resources(library_root: Path, shared_drive_path: str) -> int:
     
     # Load all local projects
     entries = list_projects(library_root)
-    projects = [e.project for e in entries]
+    # 过滤掉特殊项目，不参与索引
+    projects = [e.project for e in entries if not getattr(e.project, 'is_special', False)]
     
     db = open_index_db(library_root)
     conn = connect(db)

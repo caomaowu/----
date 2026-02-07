@@ -536,13 +536,13 @@ class DashboardView(QWidget):
                 if desired == "archived" and not is_archived_dir:
                     res = archive_project(root, Path(entry.project_dir))
                     final_dir = res.project_dir
-                    final_project, final_dir = edit_project_metadata(root, final_dir, name=dlg.name, tags=dlg.tags_list, status=desired, description=dlg.description, part_number=dlg.part_number)
+                    final_project, final_dir = edit_project_metadata(root, final_dir, name=dlg.name, tags=dlg.tags_list, status=desired, description=dlg.description, part_number=dlg.part_number, is_special=dlg.is_special)
                 elif desired != "archived" and is_archived_dir:
                     res = unarchive_project(root, Path(entry.project_dir), status=desired)
                     final_dir = res.project_dir
-                    final_project, final_dir = edit_project_metadata(root, final_dir, name=dlg.name, tags=dlg.tags_list, status=desired, description=dlg.description, part_number=dlg.part_number)
+                    final_project, final_dir = edit_project_metadata(root, final_dir, name=dlg.name, tags=dlg.tags_list, status=desired, description=dlg.description, part_number=dlg.part_number, is_special=dlg.is_special)
                 else:
-                    final_project, final_dir = edit_project_metadata(root, final_dir, name=dlg.name, tags=dlg.tags_list, status=desired, description=dlg.description, part_number=dlg.part_number)
+                    final_project, final_dir = edit_project_metadata(root, final_dir, name=dlg.name, tags=dlg.tags_list, status=desired, description=dlg.description, part_number=dlg.part_number, is_special=dlg.is_special)
 
                 if dlg.cover_cleared:
                     final_project = clear_project_cover(final_dir)

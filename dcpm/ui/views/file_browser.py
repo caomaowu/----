@@ -20,6 +20,7 @@ from qfluentwidgets import (
 from dcpm.ui.theme.colors import COLORS
 from dcpm.services.note_service import NoteService
 from dcpm.services.tag_service import TagService
+from dcpm.services.thumbnail_service import ThumbnailService
 from dcpm.ui.components.note_dialog import NoteDialog
 from dcpm.ui.views.inspection_timeline import InspectionTimeline
 from dcpm.ui.views.shared_drive_browser import SharedDriveBrowser
@@ -34,11 +35,20 @@ class FileBrowser(QWidget):
         self.library_root = library_root
         self.note_service = NoteService(library_root)
         self.tag_service = TagService(library_root)
+        
+        # Thumbnail Service
+        self.thumbnail_service = ThumbnailService(self)
+        self.thumbnail_service.thumbnailLoaded.connect(self._on_thumbnail_loaded)
+        
         self.setAcceptDrops(True) # Enable Drag & Drop
         self.current_root: Path | None = None
         self.project_root: Path | None = None
         self.project_id: str = ""
         self._item_tags: dict[str, list[str]] = {}
+        
+        # Inspection Browsing State
+        self.is_browsing_inspection = False
+        self.inspection_root: Path | None = None
         
         # Layout
         self._layout = QVBoxLayout(self)
@@ -83,6 +93,15 @@ class FileBrowser(QWidget):
             self.stack.setCurrentIndex(1)
         elif key == "inspection":
             self.stack.setCurrentIndex(2)
+
+    def _on_thumbnail_loaded(self, path: str, pixmap):
+        """Handle thumbnail loaded event"""
+        # Trigger update for the item
+        # Finding the index is tricky with just path in QFileSystemModel if it's not currently visible or loaded?
+        # But QFileSystemModel is indexed by path.
+        index = self.model.index(path)
+        if index.isValid():
+            self.list_view.update(index)
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
@@ -208,7 +227,11 @@ class FileBrowser(QWidget):
         self.list_view.setDragDropMode(QListView.DragDropMode.DragOnly) 
         
         # Custom Delegate for Fluent Look
-        self.delegate = FileItemDelegate(self.list_view, self._get_tags_for_index)
+        self.delegate = FileItemDelegate(
+            self.list_view, 
+            tag_provider=self._get_tags_for_index,
+            thumbnail_provider=self.thumbnail_service
+        )
         self.list_view.setItemDelegate(self.delegate)
         
         # Signals
@@ -219,11 +242,42 @@ class FileBrowser(QWidget):
 
         self.file_view_layout.addWidget(self.list_view)
 
+    def browse_inspection(self, path: str):
+        """Enter immersive browsing mode for inspection folder"""
+        target_path = Path(path)
+        if not target_path.exists():
+            InfoBar.error(
+                title="文件夹不存在",
+                content=f"路径: {path}",
+                parent=self
+            )
+            return
+            
+        self.is_browsing_inspection = True
+        self.inspection_root = target_path
+        self.current_root = target_path
+        
+        # Switch to File View (Page 0)
+        self.stack.setCurrentIndex(0)
+        
+        # Set Model Root
+        root_idx = self.model.setRootPath(str(target_path))
+        self.list_view.setRootIndex(root_idx)
+        
+        # Update Breadcrumbs
+        self._update_breadcrumbs(target_path)
+        
+        # Update Pivot selection without triggering signal (to avoid loop or reset)
+        self.pivot.blockSignals(True)
+        self.pivot.setCurrentItem("files")
+        self.pivot.blockSignals(False)
+
     def set_root(self, path: Path, project_name: str = "", project_id: str = ""):
         """Entry point: Navigate to a project folder"""
         if not path or not path.exists():
             return
             
+        self.is_browsing_inspection = False
         self.current_root = path
         self.project_root = path
         self.project_name = project_name
@@ -252,6 +306,7 @@ class FileBrowser(QWidget):
             old_widget.deleteLater()
             
             self.timeline_view = InspectionTimeline(self.library_root, self.project_id, self)
+            self.timeline_view.browseRequested.connect(self.browse_inspection)
             self.stack.addWidget(self.timeline_view)
 
         try:
@@ -324,8 +379,13 @@ class FileBrowser(QWidget):
         """Rebuild breadcrumbs based on relative path from project root"""
         self.breadcrumb.clear()
         
-        # Add "Project Root" item
-        self.breadcrumb.addItem(self.project_name or self.current_root.name, str(self.current_root))
+        # Determine Root Label
+        root_label = self.project_name or self.current_root.name
+        if self.is_browsing_inspection and self.inspection_root:
+             root_label = f"探伤记录: {self.inspection_root.name}"
+        
+        # Add "Root" item
+        self.breadcrumb.addItem(root_label, str(self.current_root))
         
         if current_path == self.current_root:
             self.breadcrumb.setCurrentItem(str(self.current_root))
@@ -364,6 +424,23 @@ class FileBrowser(QWidget):
         # Check if we are at root
         current_idx = self.list_view.rootIndex()
         current_path = Path(self.model.filePath(current_idx))
+        
+        # Inspection Browsing Return Logic
+        if self.is_browsing_inspection and self.inspection_root and current_path == self.inspection_root:
+            self.is_browsing_inspection = False
+            self.inspection_root = None
+            
+            # Restore to Project Root
+            if self.project_root:
+                self.current_root = self.project_root
+                # Restore File View to project root
+                root_idx = self.model.setRootPath(str(self.project_root))
+                self.list_view.setRootIndex(root_idx)
+                self._update_breadcrumbs(self.project_root)
+            
+            # Switch back to Inspection Tab
+            self.pivot.setCurrentItem("inspection")
+            return
         
         if self.current_root and current_path == self.current_root:
             # Go back to Project List

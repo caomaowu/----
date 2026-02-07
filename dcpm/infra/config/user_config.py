@@ -11,6 +11,7 @@ from typing import Any
 class UserConfig:
     library_root: str | None = None
     shared_drive_path: str | None = None
+    index_root_paths: list[str] = field(default_factory=list)
     preset_tags: list[str] = field(default_factory=lambda: [
         "#第一版", "#第二版", "#模具", "#铸件渣包流道", 
         "#产品", "#模流报告", "#压铸参数计算", "#压射参数"
@@ -34,12 +35,21 @@ def load_user_config() -> UserConfig:
     data: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
     library_root = data.get("library_root")
     shared_drive_path = data.get("shared_drive_path")
+    index_root_paths = data.get("index_root_paths")
     preset_tags = data.get("preset_tags")
     
     if library_root and not isinstance(library_root, str):
         library_root = None
     if shared_drive_path and not isinstance(shared_drive_path, str):
         shared_drive_path = None
+    
+    if index_root_paths is None:
+        # 迁移：如果存在旧的 shared_drive_path，将其作为初始索引路径
+        if shared_drive_path:
+            index_root_paths = [shared_drive_path]
+        else:
+            index_root_paths = []
+            
     if preset_tags is None or not isinstance(preset_tags, list):
         preset_tags = [
             "#第一版", "#第二版", "#模具", "#铸件渣包流道", 
@@ -49,6 +59,7 @@ def load_user_config() -> UserConfig:
     return UserConfig(
         library_root=library_root, 
         shared_drive_path=shared_drive_path,
+        index_root_paths=index_root_paths,
         preset_tags=preset_tags
     )
 
@@ -59,6 +70,7 @@ def save_user_config(cfg: UserConfig) -> None:
     payload = {
         "library_root": cfg.library_root,
         "shared_drive_path": cfg.shared_drive_path,
+        "index_root_paths": cfg.index_root_paths,
         "preset_tags": cfg.preset_tags,
     }
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")

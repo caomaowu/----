@@ -1,15 +1,16 @@
 from PyQt6.QtCore import Qt, QSize, QModelIndex, QRect
-from PyQt6.QtGui import QPainter, QColor, QIcon
+from PyQt6.QtGui import QPainter, QColor, QIcon, QPixmap, QFileSystemModel
 from PyQt6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem, QStyle
 
 from dcpm.ui.theme.colors import COLORS, get_tag_colors
 
 class FileItemDelegate(QStyledItemDelegate):
-    def __init__(self, parent=None, tag_provider=None):
+    def __init__(self, parent=None, tag_provider=None, thumbnail_provider=None):
         super().__init__(parent)
         self.margins = 8
         self.icon_size = 48
         self.tag_provider = tag_provider
+        self.thumbnail_provider = thumbnail_provider
         
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:
         return QSize(100, 130)  # Width, Height for grid items
@@ -50,11 +51,41 @@ class FileItemDelegate(QStyledItemDelegate):
 
         # --- 开始绘制 ---
 
-        # Draw Icon
-        icon: QIcon = index.data(Qt.ItemDataRole.DecorationRole)
-        if icon:
-            pixmap = icon.pixmap(self.icon_size, self.icon_size)
-            painter.drawPixmap(icon_x, icon_y, pixmap)
+        # Draw Icon or Thumbnail
+        icon_drawn = False
+        
+        # Try Thumbnail first
+        if self.thumbnail_provider:
+            # Get file path from model
+            model = index.model()
+            if isinstance(model, QFileSystemModel):
+                path = model.filePath(index)
+                thumb = self.thumbnail_provider.get_thumbnail(path)
+                if thumb:
+                    # Draw thumbnail (centered and scaled to fit icon area, maybe slightly larger)
+                    # Use a slightly larger size for thumbnails if desired, or keep uniform
+                    # Let's keep uniform icon_size for now, but thumbnails usually look better if they fill the box
+                    
+                    # Scale thumbnail to fit within (icon_size, icon_size) preserving aspect ratio
+                    scaled_thumb = thumb.scaled(
+                        self.icon_size, self.icon_size,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation
+                    )
+                    
+                    # Center the thumbnail
+                    tx = icon_x + (self.icon_size - scaled_thumb.width()) // 2
+                    ty = icon_y + (self.icon_size - scaled_thumb.height()) // 2
+                    
+                    painter.drawPixmap(tx, ty, scaled_thumb)
+                    icon_drawn = True
+
+        # Fallback to Icon
+        if not icon_drawn:
+            icon: QIcon = index.data(Qt.ItemDataRole.DecorationRole)
+            if icon:
+                pixmap = icon.pixmap(self.icon_size, self.icon_size)
+                painter.drawPixmap(icon_x, icon_y, pixmap)
 
         # Draw Text
         name: str = index.data(Qt.ItemDataRole.DisplayRole)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 from typing import List, Optional
 
@@ -155,6 +156,7 @@ class TimelineNode(CardWidget):
     
     confirmed = pyqtSignal(int)
     removed = pyqtSignal(int)
+    browseRequested = pyqtSignal(str)
 
     def __init__(self, resource: ExternalResource, parent=None):
         super().__init__(parent)
@@ -239,6 +241,11 @@ class TimelineNode(CardWidget):
         # 3. Actions (Right)
         action_row = QHBoxLayout()
         action_row.setSpacing(4)
+        
+        browse_btn = TransparentToolButton(FI.VIEW, self)
+        browse_btn.setToolTip("在应用内浏览")
+        browse_btn.clicked.connect(lambda: self.browseRequested.emit(self.resource.full_path))
+        action_row.addWidget(browse_btn)
         
         open_btn = TransparentToolButton(FI.FOLDER, self)
         open_btn.setToolTip("打开文件夹")
@@ -357,6 +364,8 @@ class MonthGroupWidget(QWidget):
 
 class InspectionTimeline(QWidget):
     """探伤记录主视图 (Toolbar + ScrollArea)"""
+    
+    browseRequested = pyqtSignal(str)
 
     def __init__(self, library_root: Path, project_id: str, parent=None):
         super().__init__(parent)
@@ -502,6 +511,7 @@ class InspectionTimeline(QWidget):
                 node = TimelineNode(res)
                 node.confirmed.connect(self._on_confirmed)
                 node.removed.connect(self._on_removed)
+                node.browseRequested.connect(self.browseRequested)
                 group_widget.add_node(node)
             
             self.scroll_layout.addWidget(group_widget)
@@ -522,9 +532,9 @@ class InspectionTimeline(QWidget):
         # But for safety, reload data to sync with DB.
         # To make it smoother, we could just update self.all_resources
         
-        for r in self.all_resources:
+        for i, r in enumerate(self.all_resources):
             if r.id == resource_id:
-                r.status = "confirmed"
+                self.all_resources[i] = replace(r, status="confirmed")
                 break
         
         InfoBar.success("已确认", "探伤记录已关联", parent=self)

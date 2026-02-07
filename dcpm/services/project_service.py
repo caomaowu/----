@@ -22,6 +22,7 @@ class CreateProjectRequest:
     customer_code: str | None = None
     part_number: str | None = None
     description: str | None = None
+    is_special: bool = False
 
 
 @dataclass(frozen=True)
@@ -121,6 +122,7 @@ def create_project(library_root: Path, req: CreateProjectRequest) -> CreateProje
         status="ongoing",
         tags=[t for t in (x.strip() for x in req.tags) if t],
         description=req.description.strip() if req.description else None,
+        is_special=req.is_special,
     )
     write_project_metadata(layout.metadata_path, project)
     return CreateProjectResult(project=project, project_dir=layout.project_dir)
@@ -135,6 +137,7 @@ def edit_project_metadata(
     status: str | None = None,
     description: str | None = None,
     part_number: str | None = None,
+    is_special: bool | None = None,
 ) -> tuple[Project, Path]:
     meta_path = Path(project_dir) / ".project.json"
     if not meta_path.exists():
@@ -190,7 +193,7 @@ def edit_project_metadata(
     if tags is not None:
         tags = [t for t in (x.strip() for x in tags) if t]
         
-    p = update_project_metadata(meta_path, name=name, tags=tags, status=status, description=description, part_number=part_number)
+    p = update_project_metadata(meta_path, name=name, tags=tags, status=status, description=description, part_number=part_number, is_special=is_special)
     return p, current_dir
 
 

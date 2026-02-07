@@ -1,6 +1,6 @@
 from datetime import datetime
 from qfluentwidgets import (
-    SubtitleLabel, StrongBodyLabel, LineEdit, MessageBoxBase
+    SubtitleLabel, StrongBodyLabel, LineEdit, MessageBoxBase, CheckBox
 )
 from dcpm.services.project_service import CreateProjectRequest
 
@@ -53,6 +53,11 @@ class CreateProjectDialog(MessageBoxBase):
         self.tagsEdit.setPlaceholderText("用逗号分隔，如: 压铸, 模具")
         self.viewLayout.addWidget(self.tagsLabel)
         self.viewLayout.addWidget(self.tagsEdit)
+        self.viewLayout.addSpacing(16)
+        
+        # 特殊项目选项
+        self.specialCheckBox = CheckBox("特殊项目（不参与探伤和共享盘索引）", self)
+        self.viewLayout.addWidget(self.specialCheckBox)
         
         # 调整按钮文字
         self.yesButton.setText("创建项目")
@@ -77,5 +82,6 @@ class CreateProjectDialog(MessageBoxBase):
             customer=self.custEdit.text(),
             name=self.nameEdit.text(),
             tags=self.tagsEdit.text().split(","),
-            part_number=self.pnEdit.text()
+            part_number=self.pnEdit.text(),
+            is_special=self.specialCheckBox.isChecked()
         )

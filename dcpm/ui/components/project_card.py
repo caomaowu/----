@@ -184,6 +184,11 @@ class ProjectCard(ShadowCard):
         painter.setClipPath(clip)
 
         card_color = QColor(COLORS["card"])
+        # 如果是特殊项目，使用淡紫色背景
+        is_special = getattr(self._entry.project, 'is_special', False)
+        if is_special:
+            card_color = QColor("#F3E5F5")
+            
         painter.fillPath(clip, card_color)
 
         cover_path = self._cover_path()
@@ -268,6 +273,21 @@ class ProjectCard(ShadowCard):
         layout.setContentsMargins(20, 20, 20, 16)
         layout.setSpacing(12)
         
+        # 特殊项目背景颜色
+        is_special = getattr(self._entry.project, 'is_special', False)
+        if is_special:
+            self.setStyleSheet(f"""
+                ProjectCard {{
+                    background-color: #F3E5F5;
+                    border-radius: 12px;
+                    border: 1px solid #CE93D8;
+                }}
+                ProjectCard:hover {{
+                    border: 1px solid #AB47BC;
+                    background-color: #E1BEE7;
+                }}
+            """)
+        
         # 顶部：图标和编号
         top_layout = QHBoxLayout()
         
@@ -311,6 +331,12 @@ class ProjectCard(ShadowCard):
         cust_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         cust_label.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 12px;")
         meta_layout.addWidget(cust_label)
+        
+        if getattr(self._entry.project, 'is_special', False):
+             special_label = QLabel("特殊项目")
+             special_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+             special_label.setStyleSheet(f"color: #9C27B0; font-size: 11px; font-weight: bold;")
+             meta_layout.addWidget(special_label)
         
         top_layout.addLayout(meta_layout)
         top_layout.addStretch()
@@ -443,6 +469,21 @@ class ProjectCard(ShadowCard):
         layout.setContentsMargins(16, 12, 16, 12)
         layout.setSpacing(16)
         
+        # 特殊项目背景颜色
+        is_special = getattr(self._entry.project, 'is_special', False)
+        if is_special:
+            self.setStyleSheet(f"""
+                ProjectCard {{
+                    background-color: #F3E5F5;
+                    border-radius: 12px;
+                    border: 1px solid #CE93D8;
+                }}
+                ProjectCard:hover {{
+                    border: 1px solid #AB47BC;
+                    background-color: #E1BEE7;
+                }}
+            """)
+        
         if self._options.checkable:
             self._checkbox = CheckBox(parent=self)
             self._checkbox.setChecked(self._options.checked)
@@ -464,6 +505,8 @@ class ProjectCard(ShadowCard):
         info_layout.addWidget(name_label)
         
         meta = f"{self._entry.project.id} · {self._entry.project.customer}"
+        if getattr(self._entry.project, 'is_special', False):
+            meta += " · 特殊"
         meta_label = QLabel(meta)
         meta_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         meta_label.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 11px;")

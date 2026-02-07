@@ -17,3 +17,4 @@ class Project:
     part_number: str | None = None
     description: str | None = None
     cover_image: str | None = None
+    is_special: bool = False

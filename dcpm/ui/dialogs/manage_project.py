@@ -60,10 +60,17 @@ class ManageProjectDialog(QDialog):
         self._pinned_switch.setChecked(entry.pinned)
         self._pinned_switch.setText("置顶显示")
         
+        # Special
+        self._special_switch = SwitchButton(self)
+        self._special_switch.setChecked(getattr(entry.project, 'is_special', False))
+        self._special_switch.setText("特殊项目")
+        self._special_switch.setToolTip("特殊项目不参与探伤报告和共享盘文件夹的自动索引")
+        
         pinned_layout = QVBoxLayout()
         pinned_layout.setSpacing(8)
         pinned_layout.addWidget(StrongBodyLabel("选项", self))
         pinned_layout.addWidget(self._pinned_switch)
+        pinned_layout.addWidget(self._special_switch)
         row2.addLayout(pinned_layout)
         
         row2.addStretch()
@@ -221,6 +228,8 @@ class ManageProjectDialog(QDialog):
     def status(self): return self._status_combo.currentText()
     @property
     def is_pinned(self): return self._pinned_switch.isChecked()
+    @property
+    def is_special(self): return self._special_switch.isChecked()
     @property
     def name(self): return self._name_edit.text().strip()
     @property

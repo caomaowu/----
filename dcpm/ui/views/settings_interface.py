@@ -3,16 +3,18 @@ from __future__ import annotations
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QFileDialog
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QFileDialog, QLabel
 from qfluentwidgets import (
     ScrollArea, SettingCardGroup, PrimaryPushSettingCard,
-    SettingCard, LineEdit, FluentIcon as FI, InfoBar, ExpandLayout
+    SettingCard, LineEdit, FluentIcon as FI, InfoBar, ExpandLayout,
+    PushButton
 )
 
 from dcpm.infra.config.user_config import load_user_config, save_user_config, UserConfig
 from dcpm.services.scanner_service import scan_and_link_resources, targeted_scan_and_link
 from dcpm.services.shared_drive_service import SharedDriveService
 from dcpm.domain.project import Project
+from dcpm.ui.dialogs.path_manager_dialog import PathManagerDialog
 
 
 class LineEditSettingCard(SettingCard):
@@ -24,6 +26,31 @@ class LineEditSettingCard(SettingCard):
         self.lineEdit.setFixedWidth(300)
         self.hBoxLayout.addWidget(self.lineEdit, 0, Qt.AlignmentFlag.AlignRight)
         self.hBoxLayout.addSpacing(16)
+
+
+class PathListCard(SettingCard):
+    """显示路径列表摘要的卡片"""
+    
+    def __init__(self, icon, title, content=None, parent=None):
+        super().__init__(icon, title, content, parent)
+        self.pathLabel = QLabel(self)
+        self.pathLabel.setStyleSheet("color: #666; font-size: 12px;")
+        
+        self.manageButton = PushButton("管理路径", self)
+        self.manageButton.setFixedWidth(100)
+        self.manageButton.setCursor(Qt.CursorShape.PointingHandCursor)
+        
+        self.hBoxLayout.addWidget(self.pathLabel, 0, Qt.AlignmentFlag.AlignRight)
+        self.hBoxLayout.addSpacing(16)
+        self.hBoxLayout.addWidget(self.manageButton, 0, Qt.AlignmentFlag.AlignRight)
+        self.hBoxLayout.addSpacing(16)
+
+    def set_paths(self, paths: list[str]):
+        if not paths:
+            self.pathLabel.setText("未设置路径")
+        else:
+            self.pathLabel.setText(f"已设置 {len(paths)} 个路径")
+
 
 
 class ScanThread(QThread):
@@ -100,22 +127,21 @@ class SettingsInterface(ScrollArea):
         # 共享盘文件夹索引组
         self.file_index_group = SettingCardGroup("共享盘文件夹索引", self.scrollWidget)
         
-        # 共享盘文件夹路径（可复用探伤报告路径或单独设置）
-        self.file_index_path_card = LineEditSettingCard(
+        # 共享盘文件夹路径列表
+        self.file_index_path_card = PathListCard(
             FI.FOLDER,
-            "共享盘根目录",
-            "设置共享盘的根目录路径，用于索引项目相关文件夹",
+            "共享盘文件夹",
+            "设置需要索引的共享盘文件夹路径",
             self.file_index_group
         )
-        self.file_index_path_card.lineEdit.setPlaceholderText(r"例如: \\192.168.1.100\Engineering")
-        self.file_index_path_card.lineEdit.editingFinished.connect(self._save_file_index_path)
+        self.file_index_path_card.manageButton.clicked.connect(self._manage_index_paths)
         
         # 索引按钮
         self.file_index_scan_card = PrimaryPushSettingCard(
             "开始索引",
             FI.SEARCH,
             "索引共享盘文件夹",
-            "扫描共享盘并自动关联与项目相关的文件夹",
+            "扫描所有配置的文件夹并自动关联与项目相关的内容",
             self.file_index_group
         )
         self.file_index_scan_card.clicked.connect(self._start_file_index_scan)
@@ -130,8 +156,9 @@ class SettingsInterface(ScrollArea):
         cfg = load_user_config()
         if cfg.shared_drive_path:
             self.shared_path_card.lineEdit.setText(cfg.shared_drive_path)
-            # 默认复用探伤报告路径
-            self.file_index_path_card.lineEdit.setText(cfg.shared_drive_path)
+        
+        # 加载索引路径
+        self.file_index_path_card.set_paths(cfg.index_root_paths)
 
     def _save_path(self):
         path = self.shared_path_card.lineEdit.text().strip()
@@ -139,20 +166,33 @@ class SettingsInterface(ScrollArea):
         new_cfg = UserConfig(
             library_root=cfg.library_root,
             shared_drive_path=path,
+            index_root_paths=cfg.index_root_paths,
             preset_tags=cfg.preset_tags
         )
         save_user_config(new_cfg)
     
-    def _save_file_index_path(self):
-        path = self.file_index_path_card.lineEdit.text().strip()
+    def _manage_index_paths(self):
+        """打开路径管理对话框"""
         cfg = load_user_config()
-        # 这里我们复用 shared_drive_path 字段，或者可以添加新的字段
-        new_cfg = UserConfig(
-            library_root=cfg.library_root,
-            shared_drive_path=path,
-            preset_tags=cfg.preset_tags
-        )
-        save_user_config(new_cfg)
+        dialog = PathManagerDialog(cfg.index_root_paths, self)
+        if dialog.exec():
+            new_paths = dialog.get_paths()
+            # 保存配置
+            new_cfg = UserConfig(
+                library_root=cfg.library_root,
+                shared_drive_path=cfg.shared_drive_path,
+                index_root_paths=new_paths,
+                preset_tags=cfg.preset_tags
+            )
+            save_user_config(new_cfg)
+            # 更新界面
+            self.file_index_path_card.set_paths(new_paths)
+            InfoBar.success(
+                title="保存成功",
+                content="共享盘文件夹路径已更新",
+                parent=self,
+                duration=2000
+            )
 
     def _start_scan(self):
         cfg = load_user_config()
@@ -215,11 +255,11 @@ class SettingsInterface(ScrollArea):
             )
             return
         
-        shared_path = self.file_index_path_card.lineEdit.text().strip()
-        if not shared_path:
+        root_paths = cfg.index_root_paths
+        if not root_paths:
             InfoBar.warning(
                 title="无法扫描",
-                content="请先设置共享盘根目录路径",
+                content="请先设置共享盘文件夹路径",
                 parent=self,
                 duration=3000
             )
@@ -235,20 +275,20 @@ class SettingsInterface(ScrollArea):
             finished = pyqtSignal(int)
             error = pyqtSignal(str)
             
-            def __init__(self, library_root: Path, shared_path: str):
+            def __init__(self, library_root: Path, shared_paths: list[str]):
                 super().__init__()
                 self.library_root = library_root
-                self.shared_path = shared_path
+                self.shared_paths = shared_paths
             
             def run(self):
                 try:
                     service = SharedDriveService(self.library_root)
-                    count = service.scan_and_index(self.shared_path)
+                    count = service.scan_and_index(self.shared_paths)
                     self.finished.emit(count)
                 except Exception as e:
                     self.error.emit(str(e))
         
-        self._file_index_thread = FileIndexThread(Path(cfg.library_root), shared_path)
+        self._file_index_thread = FileIndexThread(Path(cfg.library_root), root_paths)
         self._file_index_thread.finished.connect(self._on_file_index_finished)
         self._file_index_thread.error.connect(self._on_file_index_error)
         self._file_index_thread.start()
