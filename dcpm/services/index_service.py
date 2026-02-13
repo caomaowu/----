@@ -101,13 +101,24 @@ def ensure_index(library_root: Path) -> IndexDb:
     return open_index_db(library_root)
 
 
-def rebuild_index(library_root: Path, include_archived: bool = False) -> IndexDb:
+def rebuild_index(
+    library_root: Path, 
+    include_archived: bool = False,
+    progress_callback: callable | None = None,
+) -> IndexDb:
+    """
+    重建索引
+    
+    Args:
+        progress_callback: 可选的进度回调函数，接收 (当前项目数, 总项目数) 参数
+    """
     db = open_index_db(library_root)
     entries = list_projects(Path(library_root), include_archived=include_archived)
+    total = len(entries)
 
     conn = connect(db)
     try:
-        for entry in entries:
+        for i, entry in enumerate(entries, 1):
             upsert_project(
                 conn,
                 project_id=entry.project.id,
@@ -135,6 +146,11 @@ def rebuild_index(library_root: Path, include_archived: bool = False) -> IndexDb
                 item_tags=entry.project.item_tags,
                 fts5_enabled=db.fts5_enabled,
             )
+            # 每 10 个项目提交一次，避免长时间锁定
+            if i % 10 == 0:
+                conn.commit()
+            if progress_callback:
+                progress_callback(i, total)
         conn.commit()
     finally:
         conn.close()
@@ -270,17 +286,32 @@ def search(library_root: Path, query: str, limit: int = 200, include_archived: b
     return SearchResult(entries=entries, fts5_enabled=db.fts5_enabled)
 
 
+# 索引时跳过的目录（缓存、临时文件等）
+_SKIP_DIRS = {
+    "node_modules", "__pycache__", ".git", ".svn", ".hg",
+    ".venv", "venv", ".env", "env",
+    "dist", "build", "target", ".idea", ".vscode",
+    ".pytest_cache", ".mypy_cache", ".tox",
+    ".pm_cover",  # 项目封面缓存
+}
+
+
 def _scan_files(project_dir: Path) -> Iterable[tuple[str, str]]:
     base = Path(project_dir)
     for path in base.rglob("*"):
         if path.is_dir():
-            if path.name.startswith("."):
+            if path.name.startswith(".") or path.name in _SKIP_DIRS:
                 continue
             continue
         if path.name.startswith("."):
             continue
+        # 跳过位于缓存目录中的文件
         try:
-            rel = path.relative_to(base).as_posix()
+            rel = path.relative_to(base)
+            # 检查路径中是否包含需要跳过的目录
+            if any(part in _SKIP_DIRS for part in rel.parts[:-1]):
+                continue
+            rel_str = rel.as_posix()
         except Exception:
             continue
-        yield rel, path.name
+        yield rel_str, path.name

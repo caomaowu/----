@@ -10,7 +10,7 @@ from PyQt6.QtCore import Qt, pyqtSignal, QThread, QSize, QUrl
 from PyQt6.QtGui import QColor, QDesktopServices, QFont
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QPushButton,
-    QSizePolicy
+    QSizePolicy, QFileDialog, QInputDialog
 )
 from qfluentwidgets import (
     ScrollArea, PrimaryPushButton, TransparentToolButton,
@@ -75,7 +75,7 @@ class ScanWorker(QThread):
 class FolderToolbar(QWidget):
     """顶部工具栏"""
     filterChanged = pyqtSignal()
-    scanRequested = pyqtSignal()
+    addPathRequested = pyqtSignal()
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -99,11 +99,11 @@ class FolderToolbar(QWidget):
         
         self.layout.addStretch()
         
-        # 扫描按钮
-        self.scan_btn = PrimaryPushButton(FI.SYNC, "扫描共享盘", self)
-        self.scan_btn.setFixedHeight(32)
-        self.scan_btn.clicked.connect(self.scanRequested)
-        self.layout.addWidget(self.scan_btn)
+        # 手动添加路径按钮
+        self.add_btn = PrimaryPushButton(FI.ADD, "添加路径", self)
+        self.add_btn.setFixedHeight(32)
+        self.add_btn.clicked.connect(self.addPathRequested)
+        self.layout.addWidget(self.add_btn)
     
     def get_search_text(self) -> str:
         return self.search_edit.text().strip().lower()
@@ -345,7 +345,7 @@ class SharedDriveBrowser(QWidget):
         # 工具栏
         self.toolbar = FolderToolbar(self)
         self.toolbar.filterChanged.connect(self.apply_filters)
-        self.toolbar.scanRequested.connect(self.start_scan)
+        self.toolbar.addPathRequested.connect(self.add_manual_path)
         self.main_layout.addWidget(self.toolbar)
         
         # 统计栏
@@ -372,7 +372,7 @@ class SharedDriveBrowser(QWidget):
         self.loading_ring.hide()
         
         # 空状态
-        self.empty_widget = EmptyWidget('点击右上角"扫描共享盘"开始索引文件夹', self)
+        self.empty_widget = EmptyWidget('暂无共享盘文件夹数据', self)
         self.empty_widget.hide()
         self.main_layout.addWidget(self.empty_widget)
     
@@ -476,48 +476,6 @@ class SharedDriveBrowser(QWidget):
         
         self.scroll_layout.addStretch()
     
-    def start_scan(self):
-        """开始扫描共享盘"""
-        if not self.shared_drive_path:
-            # 尝试从设置获取
-            from dcpm.infra.config.user_config import load_user_config
-            cfg = load_user_config()
-            self.shared_drive_path = getattr(cfg, 'shared_drive_path', '')
-        
-        if not self.shared_drive_path:
-            InfoBar.warning(
-                title="未配置共享盘路径",
-                content="请在设置中配置共享盘路径",
-                parent=self
-            )
-            return
-        
-        self.toolbar.scan_btn.setEnabled(False)
-        self.toolbar.scan_btn.setText("扫描中...")
-        
-        self.scan_worker = ScanWorker(
-            self.library_root,
-            self.shared_drive_path,
-            self.project_id
-        )
-        self.scan_worker.finished.connect(self.on_scan_finished)
-        self.scan_worker.start()
-    
-    def on_scan_finished(self, count: int):
-        """扫描完成回调"""
-        self.toolbar.scan_btn.setEnabled(True)
-        self.toolbar.scan_btn.setText("扫描共享盘")
-        
-        InfoBar.success(
-            title="扫描完成",
-            content=f"共索引 {count} 个文件夹",
-            parent=self
-        )
-        
-        # 重新加载数据
-        self.empty_widget.hide()
-        self.load_data()
-    
     def on_confirmed(self, folder_id: int):
         """确认文件夹关联"""
         self.service.confirm_folder(folder_id)
@@ -591,3 +549,100 @@ class SharedDriveBrowser(QWidget):
     def set_shared_drive_path(self, path: str):
         """设置共享盘路径"""
         self.shared_drive_path = path
+
+    def add_manual_path(self):
+        """手动添加文件夹路径"""
+        from dcpm.infra.config.user_config import load_user_config
+        cfg = load_user_config()
+        
+        # 优先使用索引路径列表中的第一个，如果没有则使用探伤报告路径，最后回退到空
+        initial_path = ""
+        if cfg.index_root_paths:
+             initial_path = cfg.index_root_paths[0]
+        elif cfg.shared_drive_paths:
+             initial_path = cfg.shared_drive_paths[0]
+        
+        path = QFileDialog.getExistingDirectory(
+            self,
+            "选择文件夹",
+            initial_path
+        )
+        
+        if not path:
+            return
+            
+        path_obj = Path(path)
+        
+        # 获取文件夹信息
+        folder_name = path_obj.name
+        file_count = 0
+        total_size = 0
+        latest_mtime = 0
+        
+        try:
+            for root, dirs, files in os.walk(path):
+                dirs[:] = [d for d in dirs if not d.startswith('.')]
+                for file_name in files:
+                    if file_name.startswith('.'):
+                        continue
+                    file_path = Path(root) / file_name
+                    try:
+                        stat = file_path.stat()
+                        file_count += 1
+                        total_size += stat.st_size
+                        latest_mtime = max(latest_mtime, stat.st_mtime)
+                    except (OSError, PermissionError):
+                        continue
+        except Exception:
+            pass
+            
+        modified_time = datetime.fromtimestamp(latest_mtime) if latest_mtime > 0 else datetime.now()
+        
+        # 尝试匹配分数
+        from dcpm.infra.fs.metadata import load_project
+        project = load_project(self.library_root, self.project_id)
+        match_score = 100 # 手动添加默认满分
+        
+        # 添加到数据库
+        from dcpm.infra.db.index_db import open_index_db, connect, upsert_shared_drive_folder
+        
+        db = open_index_db(self.library_root)
+        conn = connect(db)
+        try:
+            # 这里的 root_path 和 folder_path 需要特殊处理
+            # 我们可以把父目录作为 root_path，文件夹名作为 folder_path
+            root_path = str(path_obj.parent)
+            folder_rel_path = path_obj.name
+            
+            upsert_shared_drive_folder(
+                conn,
+                project_id=self.project_id,
+                root_path=root_path,
+                folder_path=folder_rel_path,
+                folder_name=folder_name,
+                file_count=file_count,
+                total_size=total_size,
+                modified_time=modified_time.isoformat(),
+                status="confirmed", # 手动添加直接确认为关联
+                match_score=match_score,
+                created_at=datetime.now().isoformat(timespec="seconds"),
+            )
+            conn.commit()
+            
+            InfoBar.success(
+                title="添加成功",
+                content=f"已关联文件夹: {folder_name}",
+                parent=self
+            )
+            
+            # 重新加载数据
+            self.load_data()
+            
+        except Exception as e:
+            InfoBar.error(
+                title="添加失败",
+                content=str(e),
+                parent=self
+            )
+        finally:
+            conn.close()

@@ -139,6 +139,32 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_shared_folders_project_id ON shared_drive_folders(project_id);")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_shared_folders_status ON shared_drive_folders(status);")
     
+    # 扫描历史表 (用于探伤索引记忆 - 标记已完成)
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS scan_history(
+            path TEXT PRIMARY KEY,
+            folder_date TEXT NOT NULL,
+            scanned_at TEXT NOT NULL
+        );
+        """
+    )
+
+    # 探伤文件夹缓存表 (用于探伤索引记忆 - 存储内容)
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS inspection_cache(
+            parent_path TEXT NOT NULL,
+            folder_name TEXT NOT NULL,
+            folder_date TEXT NOT NULL,
+            full_path TEXT NOT NULL,
+            year INTEGER NOT NULL,
+            PRIMARY KEY(parent_path, folder_name)
+        );
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_inspection_cache_parent ON inspection_cache(parent_path);")
+    
     _ensure_project_columns(conn)
     conn.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_part_number ON projects(part_number) WHERE part_number IS NOT NULL AND part_number != '';"
@@ -712,4 +738,59 @@ delete_shared_drive_file = delete_shared_drive_folder
 clear_shared_drive_files_by_root = clear_shared_drive_folders_by_root
 get_shared_drive_stats = get_shared_drive_folder_stats
 get_shared_drive_file_types = lambda conn, project_id: []  # 文件夹模式下无文件类型
+
+
+# --- Scan History (Inspection Memory) ---
+
+def mark_directory_scanned(conn: sqlite3.Connection, path: str, folder_date: str, scanned_at: str) -> None:
+    conn.execute(
+        """
+        INSERT INTO scan_history(path, folder_date, scanned_at)
+        VALUES(?, ?, ?)
+        ON CONFLICT(path) DO UPDATE SET
+            folder_date=excluded.folder_date,
+            scanned_at=excluded.scanned_at;
+        """,
+        (path, folder_date, scanned_at),
+    )
+
+
+def get_scanned_directories(conn: sqlite3.Connection) -> set[str]:
+    rows = conn.execute("SELECT path FROM scan_history;").fetchall()
+    return {r["path"] for r in rows}
+
+
+def clear_scan_history(conn: sqlite3.Connection) -> None:
+    conn.execute("DELETE FROM scan_history;")
+    conn.execute("DELETE FROM inspection_cache;")
+
+
+def cache_inspection_folder(
+    conn: sqlite3.Connection,
+    parent_path: str,
+    folder_name: str,
+    folder_date: str,
+    full_path: str,
+    year: int,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO inspection_cache(parent_path, folder_name, folder_date, full_path, year)
+        VALUES(?, ?, ?, ?, ?)
+        ON CONFLICT(parent_path, folder_name) DO UPDATE SET
+            folder_date=excluded.folder_date,
+            full_path=excluded.full_path,
+            year=excluded.year;
+        """,
+        (parent_path, folder_name, folder_date, full_path, year),
+    )
+
+
+def get_cached_inspection_folders(conn: sqlite3.Connection, parent_path: str) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        "SELECT * FROM inspection_cache WHERE parent_path = ?;",
+        (parent_path,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
 

@@ -88,3 +88,29 @@ def update_project_metadata(
     )
     write_project_metadata(path, new)
     return new
+
+
+def load_project(library_root: Path, project_id: str) -> Project | None:
+    """
+    通过项目 ID 加载项目对象。
+    使用索引数据库查找项目物理路径，然后读取元数据。
+    """
+    from dcpm.infra.db.index_db import open_index_db, connect, fetch_projects_by_ids
+    
+    db = open_index_db(library_root)
+    conn = connect(db)
+    try:
+        rows = fetch_projects_by_ids(conn, [project_id])
+        if not rows:
+            return None
+        
+        project_dir = Path(rows[0]["project_dir"])
+        meta_path = project_dir / ".project.json"
+        if not meta_path.exists():
+            return None
+            
+        return read_project_metadata(meta_path)
+    except Exception:
+        return None
+    finally:
+        conn.close()

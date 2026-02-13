@@ -1,11 +1,44 @@
 from pathlib import Path
 from datetime import datetime
 
-from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QEvent
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QEvent, QThread
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QScrollArea, QGridLayout, QDialog
 )
+
+
+class RebuildIndexThread(QThread):
+    """后台重建索引线程"""
+    finished = pyqtSignal(object)  # IndexDb
+    error = pyqtSignal(str)
+    progress = pyqtSignal(int, int)  # current, total
+
+    def __init__(self, library_root: Path, parent=None):
+        super().__init__(parent)
+        self.library_root = library_root
+        self._is_running = True
+
+    def run(self):
+        try:
+            def on_progress(current: int, total: int):
+                if self._is_running:
+                    self.progress.emit(current, total)
+
+            db = rebuild_index(
+                self.library_root,
+                include_archived=True,
+                progress_callback=on_progress if self._is_running else None,
+            )
+            if self._is_running:
+                self.finished.emit(db)
+        except Exception as e:
+            if self._is_running:
+                self.error.emit(str(e))
+
+    def stop(self):
+        self._is_running = False
+        self.wait(1000)
 from qfluentwidgets import (
     SubtitleLabel, DropDownPushButton, RoundMenu, Action, Pivot, InfoBar, InfoBarPosition, BodyLabel, MessageBoxBase,
     PushButton, PrimaryPushButton, FluentIcon as FI
@@ -497,10 +530,10 @@ class DashboardView(QWidget):
                 
                 # Trigger incremental scan
                 cfg = load_user_config()
-                if cfg.shared_drive_path:
+                if cfg.shared_drive_paths:
                     self._auto_scan_thread = ScanThread(
                         Path(self._library_root), 
-                        cfg.shared_drive_path, 
+                        cfg.shared_drive_paths, 
                         target_project=res.project
                     )
                     self._auto_scan_thread.start()
@@ -558,10 +591,10 @@ class DashboardView(QWidget):
                 if core_changed:
                     from dcpm.ui.views.settings_interface import ScanThread
                     cfg = load_user_config()
-                    if cfg.shared_drive_path:
+                    if cfg.shared_drive_paths:
                         self._auto_scan_thread = ScanThread(
                             Path(self._library_root), 
-                            cfg.shared_drive_path, 
+                            cfg.shared_drive_paths, 
                             target_project=final_project
                         )
                         self._auto_scan_thread.start()
@@ -609,13 +642,62 @@ class DashboardView(QWidget):
 
     def rebuild_index_action(self):
         if not self._library_root: return
-        try:
-            db = rebuild_index(Path(self._library_root), include_archived=True)
-            self.indexRebuilt.emit(db.fts5_enabled)
-            self.reload_projects()
-            self._show_success("本地索引数据库已成功更新")
-        except Exception as e:
-            self._show_error(str(e))
+        
+        # 防止重复点击
+        if hasattr(self, '_rebuild_thread') and self._rebuild_thread and self._rebuild_thread.isRunning():
+            self._show_warning("索引正在重建中，请稍候...")
+            return
+        
+        # 显示进度提示
+        self._rebuild_info_bar = InfoBar.info(
+            title='正在重建索引',
+            content='准备中...',
+            orient=Qt.Orientation.Horizontal,
+            isClosable=False,
+            position=InfoBarPosition.TOP,
+            duration=-1,  # 不自动关闭
+            parent=self
+        )
+        
+        # 启动后台线程
+        self._rebuild_thread = RebuildIndexThread(Path(self._library_root), self)
+        self._rebuild_thread.finished.connect(self._on_rebuild_finished)
+        self._rebuild_thread.error.connect(self._on_rebuild_error)
+        self._rebuild_thread.progress.connect(self._on_rebuild_progress)
+        self._rebuild_thread.start()
+
+    def _on_rebuild_progress(self, current: int, total: int):
+        if hasattr(self, '_rebuild_info_bar') and self._rebuild_info_bar:
+            self._rebuild_info_bar.contentLabel.setText(f'正在索引 {current}/{total} 个项目...')
+            self._rebuild_info_bar.adjustSize()
+
+    def _on_rebuild_finished(self, db):
+        # 关闭进度提示
+        if hasattr(self, '_rebuild_info_bar') and self._rebuild_info_bar:
+            self._rebuild_info_bar.close()
+            self._rebuild_info_bar = None
+        
+        self.indexRebuilt.emit(db.fts5_enabled)
+        self.reload_projects()
+        self._show_success(f"本地索引数据库已成功更新 (FTS5: {'启用' if db.fts5_enabled else '未启用'})")
+        
+        # 清理线程
+        if hasattr(self, '_rebuild_thread') and self._rebuild_thread:
+            self._rebuild_thread.deleteLater()
+            self._rebuild_thread = None
+
+    def _on_rebuild_error(self, err: str):
+        # 关闭进度提示
+        if hasattr(self, '_rebuild_info_bar') and self._rebuild_info_bar:
+            self._rebuild_info_bar.close()
+            self._rebuild_info_bar = None
+        
+        self._show_error(f"重建索引失败: {err}")
+        
+        # 清理线程
+        if hasattr(self, '_rebuild_thread') and self._rebuild_thread:
+            self._rebuild_thread.deleteLater()
+            self._rebuild_thread = None
 
     def _show_success(self, msg):
         InfoBar.success(title='成功', content=msg, orient=Qt.Orientation.Horizontal, isClosable=True, position=InfoBarPosition.TOP, duration=2000, parent=self)

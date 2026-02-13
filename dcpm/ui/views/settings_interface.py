@@ -57,18 +57,18 @@ class ScanThread(QThread):
     finished = pyqtSignal(int)
     error = pyqtSignal(str)
 
-    def __init__(self, library_root: Path, shared_path: str, target_project: Project | None = None):
+    def __init__(self, library_root: Path, shared_paths: list[str], target_project: Project | None = None):
         super().__init__()
         self.library_root = library_root
-        self.shared_path = shared_path
+        self.shared_paths = shared_paths
         self.target_project = target_project
 
     def run(self):
         try:
             if self.target_project:
-                count = targeted_scan_and_link(self.library_root, self.shared_path, self.target_project)
+                count = targeted_scan_and_link(self.library_root, self.shared_paths, self.target_project)
             else:
-                count = scan_and_link_resources(self.library_root, self.shared_path)
+                count = scan_and_link_resources(self.library_root, self.shared_paths)
             self.finished.emit(count)
         except Exception as e:
             self.error.emit(str(e))
@@ -100,16 +100,13 @@ class SettingsInterface(ScrollArea):
         self.resource_group = SettingCardGroup("外部资源集成", self.scrollWidget)
         
         # 共享盘路径
-        self.shared_path_card = LineEditSettingCard(
+        self.shared_path_card = PathListCard(
             FI.FOLDER,
             "探伤报告根目录",
             "设置公司共享盘的 UNC 路径或映射盘符",
             self.resource_group
         )
-        self.shared_path_card.lineEdit.setPlaceholderText(r"例如: \\192.168.1.100\QualityControl\Inspection")
-        # 当文本改变时保存配置（简单起见，失去焦点或手动保存更好，这里简单实现为手动保存或实时）
-        # LineEditSettingCard doesn't have textChanged signal exposed directly easily, usually use lineEdit.textChanged
-        self.shared_path_card.lineEdit.editingFinished.connect(self._save_path)
+        self.shared_path_card.manageButton.clicked.connect(self._manage_inspection_paths)
         
         # 扫描按钮
         self.scan_card = PrimaryPushSettingCard(
@@ -154,23 +151,34 @@ class SettingsInterface(ScrollArea):
 
     def _load_config(self):
         cfg = load_user_config()
-        if cfg.shared_drive_path:
-            self.shared_path_card.lineEdit.setText(cfg.shared_drive_path)
+        self.shared_path_card.set_paths(cfg.shared_drive_paths)
         
         # 加载索引路径
         self.file_index_path_card.set_paths(cfg.index_root_paths)
 
-    def _save_path(self):
-        path = self.shared_path_card.lineEdit.text().strip()
+    def _manage_inspection_paths(self):
+        """打开探伤报告根目录管理对话框"""
         cfg = load_user_config()
-        new_cfg = UserConfig(
-            library_root=cfg.library_root,
-            shared_drive_path=path,
-            index_root_paths=cfg.index_root_paths,
-            preset_tags=cfg.preset_tags
-        )
-        save_user_config(new_cfg)
-    
+        dialog = PathManagerDialog(cfg.shared_drive_paths, self)
+        if dialog.exec():
+            new_paths = dialog.get_paths()
+            # 保存配置
+            new_cfg = UserConfig(
+                library_root=cfg.library_root,
+                shared_drive_paths=new_paths,
+                index_root_paths=cfg.index_root_paths,
+                preset_tags=cfg.preset_tags
+            )
+            save_user_config(new_cfg)
+            # 更新界面
+            self.shared_path_card.set_paths(new_paths)
+            InfoBar.success(
+                title="保存成功",
+                content="探伤报告根目录已更新",
+                parent=self,
+                duration=2000
+            )
+
     def _manage_index_paths(self):
         """打开路径管理对话框"""
         cfg = load_user_config()
@@ -180,7 +188,7 @@ class SettingsInterface(ScrollArea):
             # 保存配置
             new_cfg = UserConfig(
                 library_root=cfg.library_root,
-                shared_drive_path=cfg.shared_drive_path,
+                shared_drive_paths=cfg.shared_drive_paths,
                 index_root_paths=new_paths,
                 preset_tags=cfg.preset_tags
             )
@@ -205,11 +213,11 @@ class SettingsInterface(ScrollArea):
             )
             return
             
-        shared_path = self.shared_path_card.lineEdit.text().strip()
-        if not shared_path:
+        shared_paths = cfg.shared_drive_paths
+        if not shared_paths:
             InfoBar.warning(
                 title="无法扫描",
-                content="请先设置共享盘路径",
+                content="请先设置探伤报告根目录",
                 parent=self,
                 duration=3000
             )
@@ -218,7 +226,7 @@ class SettingsInterface(ScrollArea):
         self.scan_card.button.setEnabled(False)
         self.scan_card.button.setText("扫描中...")
         
-        self._scan_thread = ScanThread(Path(cfg.library_root), shared_path)
+        self._scan_thread = ScanThread(Path(cfg.library_root), shared_paths)
         self._scan_thread.finished.connect(self._on_scan_finished)
         self._scan_thread.error.connect(self._on_scan_error)
         self._scan_thread.start()

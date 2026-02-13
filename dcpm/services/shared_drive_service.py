@@ -91,8 +91,9 @@ class SharedDriveScanner:
         if not self.root_path.exists():
             return
         
-        # 只扫描第一层目录作为项目文件夹
+        # 扫描前两层目录
         try:
+            # 第一层
             for item in self.root_path.iterdir():
                 if not item.is_dir():
                     continue
@@ -102,24 +103,44 @@ class SharedDriveScanner:
                 if folder_name.startswith('.') or folder_name in {'System Volume Information', '$RECYCLE.BIN'}:
                     continue
                 
-                # 获取文件夹信息
+                # 处理第一层文件夹
                 file_count, total_size, modified_time = self._get_folder_info(item)
                 
-                # 过滤空文件夹
-                if file_count < min_file_count:
+                if file_count >= min_file_count:
+                    rel_path = item.relative_to(self.root_path).as_posix()
+                    yield ScanFolderResult(
+                        folder_path=rel_path,
+                        folder_name=folder_name,
+                        file_count=file_count,
+                        total_size=total_size,
+                        modified_time=modified_time,
+                    )
+                
+                # 第二层
+                try:
+                    for sub_item in item.iterdir():
+                        if not sub_item.is_dir():
+                            continue
+                        
+                        sub_folder_name = sub_item.name
+                        if sub_folder_name.startswith('.'):
+                            continue
+                        
+                        # 处理第二层文件夹
+                        file_count, total_size, modified_time = self._get_folder_info(sub_item)
+                        
+                        if file_count >= min_file_count:
+                            rel_path = sub_item.relative_to(self.root_path).as_posix()
+                            yield ScanFolderResult(
+                                folder_path=rel_path,
+                                folder_name=sub_folder_name,
+                                file_count=file_count,
+                                total_size=total_size,
+                                modified_time=modified_time,
+                            )
+                except (OSError, PermissionError):
                     continue
-                
-                # 计算相对路径
-                rel_path = item.relative_to(self.root_path).as_posix()
-                
-                yield ScanFolderResult(
-                    folder_path=rel_path,
-                    folder_name=folder_name,
-                    file_count=file_count,
-                    total_size=total_size,
-                    modified_time=modified_time,
-                )
-                
+                    
         except (OSError, PermissionError):
             return
 
@@ -225,13 +246,33 @@ class SharedDriveService:
         indexed_count = 0
         now_str = datetime.now().isoformat(timespec="seconds")
         
+        # 检查是否已存在确认的文件夹
+        def is_project_confirmed(pid: str) -> bool:
+            folders = get_shared_drive_folders(conn, pid, status="confirmed")
+            return len(folders) > 0
+
+        # 如果指定了目标项目且已确认，直接返回
+        if target_project and is_project_confirmed(target_project.id):
+            conn.close()
+            return 0
+        
         # 预加载项目信息（全库模式）
         projects = []
         matchers = {}
+        confirmed_projects = set()
+        
         if not target_project:
             entries = list_projects(self.library_root)
             # 过滤掉特殊项目，不参与索引
-            projects = [e.project for e in entries if not getattr(e.project, 'is_special', False)]
+            all_projects = [e.project for e in entries if not getattr(e.project, 'is_special', False)]
+            
+            # 找出已确认的项目
+            for p in all_projects:
+                if is_project_confirmed(p.id):
+                    confirmed_projects.add(p.id)
+                else:
+                    projects.append(p)
+                    
             matchers = {p.id: FolderMatcher(p) for p in projects}
         
         try:
@@ -269,6 +310,10 @@ class SharedDriveService:
                         
                         # 找到最匹配的项目
                         for project in projects:
+                            # 跳过已确认的项目（实际上 projects 列表已经过滤了 confirmed_projects，双重保险）
+                            if project.id in confirmed_projects:
+                                continue
+                                
                             score = matchers[project.id].match(scan_result.folder_name)
                             if score > best_score:
                                 best_score = score
