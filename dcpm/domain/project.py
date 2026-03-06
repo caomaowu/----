@@ -8,8 +8,8 @@ from datetime import datetime
 class Project:
     id: str
     name: str
-    customer: str
     create_time: datetime
+    customer: str | None = None
     status: str = "ongoing"
     tags: list[str] = field(default_factory=list)
     item_tags: dict[str, list[str]] = field(default_factory=dict)

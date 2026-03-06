@@ -24,7 +24,7 @@ class CreateProjectDialog(MessageBoxBase):
         self.viewLayout.addSpacing(12)
         
         # 客户
-        self.custLabel = StrongBodyLabel("客户名称", self)
+        self.custLabel = StrongBodyLabel("客户名称 (可选)", self)
         self.custEdit = LineEdit(self)
         self.custEdit.setPlaceholderText("例如: BMW, Tesla")
         self.viewLayout.addWidget(self.custLabel)
@@ -71,15 +71,14 @@ class CreateProjectDialog(MessageBoxBase):
         self.monthEdit.textChanged.connect(self._validate)
 
     def _validate(self):
-        valid = bool(self.custEdit.text().strip() and 
-                     self.nameEdit.text().strip() and 
+        valid = bool(self.nameEdit.text().strip() and 
                      self.monthEdit.text().strip())
         self.yesButton.setDisabled(not valid)
 
     def build_request(self):
         return CreateProjectRequest(
             month=self.monthEdit.text(),
-            customer=self.custEdit.text(),
+            customer=self.custEdit.text().strip() or None,
             name=self.nameEdit.text(),
             tags=self.tagsEdit.text().split(","),
             part_number=self.pnEdit.text(),

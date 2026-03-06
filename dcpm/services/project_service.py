@@ -16,9 +16,9 @@ from dcpm.infra.db.index_db import open_index_db, check_part_number_unique, conn
 @dataclass(frozen=True)
 class CreateProjectRequest:
     month: str
-    customer: str
     name: str
     tags: list[str]
+    customer: str | None = None
     customer_code: str | None = None
     part_number: str | None = None
     description: str | None = None
@@ -65,15 +65,21 @@ def create_project(library_root: Path, req: CreateProjectRequest) -> CreateProje
     seq = _next_seq(month_dir, year, month)
     project_id = ProjectId(year=year, month=month, seq=seq).format()
 
-    customer = sanitize_folder_component(req.customer)
+    customer = sanitize_folder_component(req.customer or "")
     name = sanitize_folder_component(req.name)
-    folder_name = f"{project_id}_{customer}_{name}"
+    if customer:
+        folder_name = f"{project_id}_{customer}_{name}"
+    else:
+        folder_name = f"{project_id}_{name}"
 
     layout = build_layout(root, req.month, folder_name)
     if layout.project_dir.exists():
         for i in range(1, 1000):
             alt_id = ProjectId(year=year, month=month, seq=seq + i).format()
-            alt_folder_name = f"{alt_id}_{customer}_{name}"
+            if customer:
+                alt_folder_name = f"{alt_id}_{customer}_{name}"
+            else:
+                alt_folder_name = f"{alt_id}_{name}"
             alt_layout = build_layout(root, req.month, alt_folder_name)
             if not alt_layout.project_dir.exists():
                 project_id = alt_id

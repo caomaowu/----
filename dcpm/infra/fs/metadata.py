@@ -40,10 +40,15 @@ def read_project_metadata(path: Path) -> Project:
     cover_image = data.get("cover_image")
     if cover_image is not None:
         cover_image = str(cover_image).strip() or None
+    
+    customer = data.get("customer")
+    if customer is not None:
+        customer = str(customer).strip() or None
+
     return Project(
         id=str(data["id"]),
         name=str(data["name"]),
-        customer=str(data["customer"]),
+        customer=customer,
         customer_code=data.get("customer_code"),
         part_number=data.get("part_number"),
         create_time=create_time,
