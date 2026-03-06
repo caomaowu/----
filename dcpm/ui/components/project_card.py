@@ -9,7 +9,6 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
-    QToolTip,
     QVBoxLayout,
     QWidget,
     QSizePolicy,
@@ -598,11 +597,52 @@ class _CopyLabel(QLabel):
                 clipboard = QGuiApplication.clipboard()
                 if clipboard is not None:
                     clipboard.setText(text)
-                QToolTip.showText(
-                    event.globalPosition().toPoint(),
-                    "已复制",
-                    self,
+                host = self.window() if isinstance(self.window(), QWidget) else self
+                old_tip = getattr(host, "_copy_feedback_label", None)
+                if isinstance(old_tip, QLabel):
+                    try:
+                        old_tip.deleteLater()
+                    except RuntimeError:
+                        pass
+
+                tip = QLabel("已复制", host)
+                tip.setObjectName("copyFeedbackLabel")
+                tip.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                tip.setStyleSheet("""
+                    QLabel#copyFeedbackLabel {
+                        color: white;
+                        background: rgba(33, 37, 41, 220);
+                        border-radius: 10px;
+                        padding: 8px 16px;
+                        font-size: 13px;
+                        font-weight: bold;
+                    }
+                """)
+                tip.adjustSize()
+                tip.move(
+                    max(0, (host.width() - tip.width()) // 2),
+                    max(0, (host.height() - tip.height()) // 2),
                 )
+                tip.show()
+                tip.raise_()
+                host._copy_feedback_label = tip
+
+                def _hide_tip():
+                    try:
+                        if getattr(host, "_copy_feedback_label", None) is tip:
+                            host._copy_feedback_label = None
+                    except RuntimeError:
+                        pass
+                    try:
+                        tip.deleteLater()
+                    except RuntimeError:
+                        pass
+
+                hide_timer = QTimer(tip)
+                hide_timer.setSingleShot(True)
+                hide_timer.timeout.connect(_hide_tip)
+                hide_timer.start(1000)
+                tip._hide_timer = hide_timer
                 event.accept()
                 return
         super().mousePressEvent(event)

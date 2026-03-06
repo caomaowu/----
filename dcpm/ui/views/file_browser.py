@@ -223,7 +223,7 @@ class FileBrowser(QWidget):
         self.list_view.setResizeMode(QListView.ResizeMode.Adjust)
         self.list_view.setWordWrap(True)
         self.list_view.setSpacing(8)
-        self.list_view.setUniformItemSizes(True)
+        self.list_view.setUniformItemSizes(False)
         self.list_view.setFrameShape(QFrame.Shape.NoFrame)
         self.list_view.setStyleSheet("background: transparent; border: none;")
         self.list_view.setSelectionMode(QListView.SelectionMode.ExtendedSelection)
