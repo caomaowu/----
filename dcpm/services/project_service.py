@@ -121,7 +121,7 @@ def create_project(library_root: Path, req: CreateProjectRequest) -> CreateProje
     project = Project(
         id=project_id,
         name=req.name.strip(),
-        customer=req.customer.strip(),
+        customer=req.customer.strip() if req.customer else None,
         customer_code=req.customer_code.strip() if req.customer_code else None,
         part_number=req.part_number.strip() if req.part_number else None,
         create_time=create_time,

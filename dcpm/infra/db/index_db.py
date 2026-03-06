@@ -237,7 +237,7 @@ def upsert_project(
     conn: sqlite3.Connection,
     *,
     project_id: str,
-    customer: str,
+    customer: str | None,
     name: str,
     tags: list[str],
     status: str,
@@ -263,7 +263,7 @@ def upsert_project(
             description=excluded.description,
             part_number=excluded.part_number;
         """,
-        (project_id, customer, name, json.dumps(tags, ensure_ascii=False), status, create_time, month, project_dir, description, part_number),
+        (project_id, customer or "", name, json.dumps(tags, ensure_ascii=False), status, create_time, month, project_dir, description, part_number),
     )
 
     if not fts5_enabled:
@@ -274,7 +274,7 @@ def upsert_project(
     conn.execute("DELETE FROM project_fts WHERE id = ?;", (project_id,))
     conn.execute(
         "INSERT INTO project_fts(id, customer, name, part_number, tags, dir_name, description) VALUES(?, ?, ?, ?, ?, ?, ?);",
-        (project_id, customer, name, part_number or "", tags_text, dir_name, description or ""),
+        (project_id, customer or "", name, part_number or "", tags_text, dir_name, description or ""),
     )
 
 

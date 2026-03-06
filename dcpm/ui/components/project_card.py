@@ -327,7 +327,8 @@ class ProjectCard(ShadowCard):
         code_label.setStyleSheet(f"color: {COLORS['primary']}; font-size: 11px; font-weight: bold;")
         meta_layout.addWidget(code_label)
         
-        cust_label = QLabel(self._entry.project.customer)
+        cust_text = self._entry.project.customer or "无客户"
+        cust_label = QLabel(cust_text)
         cust_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         cust_label.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 12px;")
         meta_layout.addWidget(cust_label)
@@ -504,7 +505,7 @@ class ProjectCard(ShadowCard):
         name_label.setStyleSheet(f"font-weight: bold; font-size: 13px; color: {COLORS['text']};")
         info_layout.addWidget(name_label)
         
-        meta = f"{self._entry.project.id} · {self._entry.project.customer}"
+        meta = f"{self._entry.project.id} · {self._entry.project.customer or '无客户'}"
         if getattr(self._entry.project, 'is_special', False):
             meta += " · 特殊"
         meta_label = QLabel(meta)

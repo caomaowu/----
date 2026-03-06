@@ -89,7 +89,7 @@ def get_recent_activity(library_root: Path, limit: int = 10) -> list[dict[str, s
             {
                 "id": str(r["id"]),
                 "name": str(r["name"]),
-                "customer": str(r["customer"]),
+                "customer": str(r["customer"] or ""),
                 "status": str(r["status"]),
                 "time": str(r.get("last_open_time") or r["create_time"]),
             }
