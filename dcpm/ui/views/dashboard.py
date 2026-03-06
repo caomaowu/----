@@ -530,7 +530,7 @@ class DashboardView(QWidget):
                 
                 # Trigger incremental scan
                 cfg = load_user_config()
-                if cfg.shared_drive_paths:
+                if cfg.inspection_index_enabled and cfg.shared_drive_paths:
                     self._auto_scan_thread = ScanThread(
                         Path(self._library_root), 
                         cfg.shared_drive_paths, 
@@ -591,7 +591,7 @@ class DashboardView(QWidget):
                 if core_changed:
                     from dcpm.ui.views.settings_interface import ScanThread
                     cfg = load_user_config()
-                    if cfg.shared_drive_paths:
+                    if cfg.inspection_index_enabled and cfg.shared_drive_paths:
                         self._auto_scan_thread = ScanThread(
                             Path(self._library_root), 
                             cfg.shared_drive_paths, 

@@ -8,6 +8,7 @@ from typing import Generator, NamedTuple, Callable
 
 from dcpm.domain.external_resource import ExternalResource
 from dcpm.domain.project import Project
+from dcpm.infra.config.user_config import is_inspection_index_enabled
 from dcpm.infra.db.index_db import (
     connect,
     open_index_db,
@@ -228,6 +229,9 @@ def targeted_scan_and_link(library_root: Path, shared_drive_paths: list[str], ta
     Optimized scan that only looks for resources matching a specific project.
     Avoids full re-scan and DB cleanup overhead.
     """
+    if not is_inspection_index_enabled():
+        return 0
+
     db = open_index_db(library_root)
     conn = connect(db)
 
@@ -306,6 +310,9 @@ def scan_and_link_resources(library_root: Path, shared_drive_paths: list[str]) -
     Scans the shared drive and links resources to local projects.
     Returns the number of new links created.
     """
+    if not is_inspection_index_enabled():
+        return 0
+
     # Load all local projects
     entries = list_projects(library_root)
     # 过滤掉特殊项目，不参与索引

@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import QWidget, QVBoxLayout, QFileDialog, QLabel
 from qfluentwidgets import (
     ScrollArea, SettingCardGroup, PrimaryPushSettingCard,
     SettingCard, LineEdit, FluentIcon as FI, InfoBar, ExpandLayout,
-    PushButton
+    PushButton, SwitchButton
 )
 
 from dcpm.infra.config.user_config import load_user_config, save_user_config, UserConfig
@@ -50,6 +50,21 @@ class PathListCard(SettingCard):
             self.pathLabel.setText("未设置路径")
         else:
             self.pathLabel.setText(f"已设置 {len(paths)} 个路径")
+
+
+class ToggleSettingCard(SettingCard):
+    """带开关的设置卡片"""
+
+    def __init__(self, icon, title, content=None, parent=None):
+        super().__init__(icon, title, content, parent)
+        self.switchButton = SwitchButton(self)
+        self.switchButton.setText("已启用")
+        self.hBoxLayout.addWidget(self.switchButton, 0, Qt.AlignmentFlag.AlignRight)
+        self.hBoxLayout.addSpacing(16)
+
+    def set_checked(self, enabled: bool):
+        self.switchButton.setChecked(enabled)
+        self.switchButton.setText("已启用" if enabled else "已关闭")
 
 
 
@@ -107,18 +122,27 @@ class SettingsInterface(ScrollArea):
             self.resource_group
         )
         self.shared_path_card.manageButton.clicked.connect(self._manage_inspection_paths)
+
+        self.inspection_toggle_card = ToggleSettingCard(
+            FI.POWER_BUTTON,
+            "启用探伤自动关联",
+            "关闭后不新增索引，已有数据保留",
+            self.resource_group
+        )
+        self.inspection_toggle_card.switchButton.checkedChanged.connect(self._on_inspection_toggle_changed)
         
         # 扫描按钮
         self.scan_card = PrimaryPushSettingCard(
             "立即扫描",
             FI.SYNC,
             "扫描共享盘",
-            "根据路径规则自动关联探伤报告",
+            "根据路径规则自动关联探伤报告（关闭后不新增索引，已有数据保留）",
             self.resource_group
         )
         self.scan_card.clicked.connect(self._start_scan)
 
         self.resource_group.addSettingCard(self.shared_path_card)
+        self.resource_group.addSettingCard(self.inspection_toggle_card)
         self.resource_group.addSettingCard(self.scan_card)
         
         # 共享盘文件夹索引组
@@ -132,18 +156,27 @@ class SettingsInterface(ScrollArea):
             self.file_index_group
         )
         self.file_index_path_card.manageButton.clicked.connect(self._manage_index_paths)
+
+        self.shared_folder_toggle_card = ToggleSettingCard(
+            FI.POWER_BUTTON,
+            "启用共享盘文件夹索引",
+            "关闭后不新增索引，已有数据保留",
+            self.file_index_group
+        )
+        self.shared_folder_toggle_card.switchButton.checkedChanged.connect(self._on_shared_folder_toggle_changed)
         
         # 索引按钮
         self.file_index_scan_card = PrimaryPushSettingCard(
             "开始索引",
             FI.SEARCH,
             "索引共享盘文件夹",
-            "扫描所有配置的文件夹并自动关联与项目相关的内容",
+            "扫描所有配置的文件夹并自动关联与项目相关的内容（关闭后不新增索引，已有数据保留）",
             self.file_index_group
         )
         self.file_index_scan_card.clicked.connect(self._start_file_index_scan)
         
         self.file_index_group.addSettingCard(self.file_index_path_card)
+        self.file_index_group.addSettingCard(self.shared_folder_toggle_card)
         self.file_index_group.addSettingCard(self.file_index_scan_card)
         
         self.expandLayout.addWidget(self.resource_group)
@@ -152,9 +185,52 @@ class SettingsInterface(ScrollArea):
     def _load_config(self):
         cfg = load_user_config()
         self.shared_path_card.set_paths(cfg.shared_drive_paths)
-        
-        # 加载索引路径
         self.file_index_path_card.set_paths(cfg.index_root_paths)
+
+        self.inspection_toggle_card.switchButton.blockSignals(True)
+        self.inspection_toggle_card.set_checked(cfg.inspection_index_enabled)
+        self.inspection_toggle_card.switchButton.blockSignals(False)
+
+        self.shared_folder_toggle_card.switchButton.blockSignals(True)
+        self.shared_folder_toggle_card.set_checked(cfg.shared_folder_index_enabled)
+        self.shared_folder_toggle_card.switchButton.blockSignals(False)
+
+        self._apply_scan_button_state(cfg)
+
+    def _apply_scan_button_state(self, cfg: UserConfig):
+        inspection_enabled = cfg.inspection_index_enabled
+        self.scan_card.button.setEnabled(inspection_enabled)
+        self.scan_card.button.setText("立即扫描" if inspection_enabled else "已关闭")
+
+        shared_folder_enabled = cfg.shared_folder_index_enabled
+        self.file_index_scan_card.button.setEnabled(shared_folder_enabled)
+        self.file_index_scan_card.button.setText("开始索引" if shared_folder_enabled else "已关闭")
+
+    def _on_inspection_toggle_changed(self, enabled: bool):
+        cfg = load_user_config()
+        save_user_config(UserConfig(
+            library_root=cfg.library_root,
+            shared_drive_paths=cfg.shared_drive_paths,
+            index_root_paths=cfg.index_root_paths,
+            inspection_index_enabled=enabled,
+            shared_folder_index_enabled=cfg.shared_folder_index_enabled,
+            preset_tags=cfg.preset_tags
+        ))
+        self.inspection_toggle_card.set_checked(enabled)
+        self._apply_scan_button_state(load_user_config())
+
+    def _on_shared_folder_toggle_changed(self, enabled: bool):
+        cfg = load_user_config()
+        save_user_config(UserConfig(
+            library_root=cfg.library_root,
+            shared_drive_paths=cfg.shared_drive_paths,
+            index_root_paths=cfg.index_root_paths,
+            inspection_index_enabled=cfg.inspection_index_enabled,
+            shared_folder_index_enabled=enabled,
+            preset_tags=cfg.preset_tags
+        ))
+        self.shared_folder_toggle_card.set_checked(enabled)
+        self._apply_scan_button_state(load_user_config())
 
     def _manage_inspection_paths(self):
         """打开探伤报告根目录管理对话框"""
@@ -167,6 +243,8 @@ class SettingsInterface(ScrollArea):
                 library_root=cfg.library_root,
                 shared_drive_paths=new_paths,
                 index_root_paths=cfg.index_root_paths,
+                inspection_index_enabled=cfg.inspection_index_enabled,
+                shared_folder_index_enabled=cfg.shared_folder_index_enabled,
                 preset_tags=cfg.preset_tags
             )
             save_user_config(new_cfg)
@@ -190,6 +268,8 @@ class SettingsInterface(ScrollArea):
                 library_root=cfg.library_root,
                 shared_drive_paths=cfg.shared_drive_paths,
                 index_root_paths=new_paths,
+                inspection_index_enabled=cfg.inspection_index_enabled,
+                shared_folder_index_enabled=cfg.shared_folder_index_enabled,
                 preset_tags=cfg.preset_tags
             )
             save_user_config(new_cfg)
@@ -204,6 +284,15 @@ class SettingsInterface(ScrollArea):
 
     def _start_scan(self):
         cfg = load_user_config()
+        if not cfg.inspection_index_enabled:
+            InfoBar.info(
+                title="功能已关闭",
+                content="探伤自动关联已关闭，已有数据已保留",
+                parent=self,
+                duration=3000
+            )
+            return
+
         if not cfg.library_root:
             InfoBar.warning(
                 title="无法扫描",
@@ -254,6 +343,15 @@ class SettingsInterface(ScrollArea):
     def _start_file_index_scan(self):
         """开始共享盘文件夹索引扫描"""
         cfg = load_user_config()
+        if not cfg.shared_folder_index_enabled:
+            InfoBar.info(
+                title="功能已关闭",
+                content="共享盘文件夹索引已关闭，已有数据已保留",
+                parent=self,
+                duration=3000
+            )
+            return
+
         if not cfg.library_root:
             InfoBar.warning(
                 title="无法扫描",

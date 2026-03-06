@@ -195,7 +195,15 @@ class MainWindow(QMainWindow):
         path = QFileDialog.getExistingDirectory(self, "选择压铸项目库根目录", self._library_root or "")
         if not path: return
         self._library_root = path
-        save_user_config(UserConfig(library_root=path))
+        cfg = load_user_config()
+        save_user_config(UserConfig(
+            library_root=path,
+            shared_drive_paths=cfg.shared_drive_paths,
+            index_root_paths=cfg.index_root_paths,
+            inspection_index_enabled=cfg.inspection_index_enabled,
+            shared_folder_index_enabled=cfg.shared_folder_index_enabled,
+            preset_tags=cfg.preset_tags,
+        ))
         
         self._dashboard.set_library_root(path)
         self._file_browser.set_root(None) # Reset file browser

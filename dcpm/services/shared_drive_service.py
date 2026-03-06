@@ -8,6 +8,7 @@ from typing import Generator, NamedTuple
 
 from dcpm.domain.project import Project
 from dcpm.domain.shared_drive_file import SharedDriveFolder, FolderStatus
+from dcpm.infra.config.user_config import is_shared_folder_index_enabled
 from dcpm.infra.db.index_db import (
     connect,
     open_index_db,
@@ -235,6 +236,9 @@ class SharedDriveService:
         Returns:
             新增/更新的索引数量
         """
+        if not is_shared_folder_index_enabled():
+            return 0
+
         if isinstance(shared_drive_paths, str):
             root_paths = [shared_drive_paths]
         else:
@@ -455,5 +459,8 @@ def quick_scan_project(
     
     这是一个便捷函数，用于在项目中快速建立共享盘索引
     """
+    if not is_shared_folder_index_enabled():
+        return 0
+
     service = SharedDriveService(library_root)
     return service.scan_and_index(shared_drive_path, target_project=project)

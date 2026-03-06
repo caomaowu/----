@@ -19,6 +19,7 @@ from qfluentwidgets import (
     IndeterminateProgressRing, ToolButton
 )
 
+from dcpm.infra.config.user_config import load_user_config
 from dcpm.domain.shared_drive_file import SharedDriveFolder, FolderStatus
 from dcpm.ui.theme.colors import COLORS
 from dcpm.services.shared_drive_service import SharedDriveService
@@ -55,6 +56,12 @@ class ScanWorker(QThread):
         self.project_id = project_id
         
     def run(self):
+        cfg = load_user_config()
+        if not cfg.shared_folder_index_enabled:
+            self.progress.emit("共享盘文件夹索引已关闭")
+            self.finished.emit(0)
+            return
+
         from dcpm.infra.fs.metadata import load_project
         
         # 加载项目信息
@@ -552,7 +559,6 @@ class SharedDriveBrowser(QWidget):
 
     def add_manual_path(self):
         """手动添加文件夹路径"""
-        from dcpm.infra.config.user_config import load_user_config
         cfg = load_user_config()
         
         # 优先使用索引路径列表中的第一个，如果没有则使用探伤报告路径，最后回退到空

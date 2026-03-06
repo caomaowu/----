@@ -12,6 +12,8 @@ class UserConfig:
     library_root: str | None = None
     shared_drive_paths: list[str] = field(default_factory=list)
     index_root_paths: list[str] = field(default_factory=list)
+    inspection_index_enabled: bool = True
+    shared_folder_index_enabled: bool = True
     preset_tags: list[str] = field(default_factory=lambda: [
         "#第一版", "#第二版", "#模具", "#铸件渣包流道", 
         "#产品", "#模流报告", "#压铸参数计算", "#压射参数"
@@ -36,6 +38,8 @@ def load_user_config() -> UserConfig:
     library_root = data.get("library_root")
     shared_drive_paths = data.get("shared_drive_paths")
     index_root_paths = data.get("index_root_paths")
+    inspection_index_enabled = data.get("inspection_index_enabled")
+    shared_folder_index_enabled = data.get("shared_folder_index_enabled")
     preset_tags = data.get("preset_tags")
     
     # 迁移逻辑：如果存在旧的 shared_drive_path，将其迁移到 list
@@ -61,11 +65,19 @@ def load_user_config() -> UserConfig:
             "#第一版", "#第二版", "#模具", "#铸件渣包流道", 
             "#产品", "#模流报告", "#压铸参数计算", "#压射参数"
         ]
+
+    if not isinstance(inspection_index_enabled, bool):
+        inspection_index_enabled = True
+
+    if not isinstance(shared_folder_index_enabled, bool):
+        shared_folder_index_enabled = True
         
     return UserConfig(
         library_root=library_root, 
         shared_drive_paths=shared_drive_paths,
         index_root_paths=index_root_paths,
+        inspection_index_enabled=inspection_index_enabled,
+        shared_folder_index_enabled=shared_folder_index_enabled,
         preset_tags=preset_tags
     )
 
@@ -77,6 +89,16 @@ def save_user_config(cfg: UserConfig) -> None:
         "library_root": cfg.library_root,
         "shared_drive_paths": cfg.shared_drive_paths,
         "index_root_paths": cfg.index_root_paths,
+        "inspection_index_enabled": cfg.inspection_index_enabled,
+        "shared_folder_index_enabled": cfg.shared_folder_index_enabled,
         "preset_tags": cfg.preset_tags,
     }
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def is_inspection_index_enabled() -> bool:
+    return load_user_config().inspection_index_enabled
+
+
+def is_shared_folder_index_enabled() -> bool:
+    return load_user_config().shared_folder_index_enabled
