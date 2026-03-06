@@ -21,7 +21,7 @@ def ensure_pm_system(root: Path) -> Path:
 def create_project_folders(project_dir: Path) -> None:
     folders = [
         "01_3D文件",
-        "02_模流报告",
+        "02_模流报告及数据收集",
         "03_试模数据",
         "04_项目文件",
         "05_问题",
