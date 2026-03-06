@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QToolTip,
     QVBoxLayout,
     QWidget,
     QSizePolicy,
@@ -404,15 +405,26 @@ class ProjectCard(ShadowCard):
         top_layout.addWidget(del_btn)
         
         layout.addLayout(top_layout)
+        layout.addSpacing(2)
         
-        # 项目名称
-        name_label = QLabel(self._entry.project.name)
+        # 项目名称（单击复制）
+        name_label = _CopyLabel(self._entry.project.name)
         name_font = QFont("Segoe UI", 13, QFont.Weight.Bold)
         name_label.setFont(name_font)
-        name_label.setWordWrap(True)
+        name_label.setWordWrap(False)
         name_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         name_label.setStyleSheet(f"color: {COLORS['text']};")
         layout.addWidget(name_label)
+
+        # 料号（单击复制，橙色，小一号）
+        if self._entry.project.part_number:
+            part_label = _CopyLabel(self._entry.project.part_number)
+            part_font = QFont("Segoe UI", 12, QFont.Weight.Bold)
+            part_label.setFont(part_font)
+            part_label.setWordWrap(False)
+            part_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+            part_label.setStyleSheet(f"color: {COLORS['primary']};")
+            layout.addWidget(part_label)
         
         # 标签
         tags_layout = QHBoxLayout()
@@ -500,10 +512,18 @@ class ProjectCard(ShadowCard):
         info_layout = QVBoxLayout()
         info_layout.setSpacing(2)
         
-        name_label = QLabel(self._entry.project.name)
+        name_label = _CopyLabel(self._entry.project.name)
         name_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        name_label.setWordWrap(False)
         name_label.setStyleSheet(f"font-weight: bold; font-size: 13px; color: {COLORS['text']};")
         info_layout.addWidget(name_label)
+
+        if self._entry.project.part_number:
+            part_label = _CopyLabel(self._entry.project.part_number)
+            part_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+            part_label.setWordWrap(False)
+            part_label.setStyleSheet(f"font-weight: bold; font-size: 12px; color: {COLORS['primary']};")
+            info_layout.addWidget(part_label)
         
         meta = f"{self._entry.project.id} · {self._entry.project.customer or '无客户'}"
         if getattr(self._entry.project, 'is_special', False):
@@ -561,6 +581,31 @@ class ProjectCard(ShadowCard):
         if self._cover_preview_timer is not None:
             self._cover_preview_timer.stop()
         self.openRequested.emit(self._entry)
+
+
+class _CopyLabel(QLabel):
+    """单击即可复制文本的标签"""
+
+    def __init__(self, text: str, parent: QWidget | None = None):
+        super().__init__(text, parent)
+        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.setToolTip("单击复制")
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            text = self.text().strip()
+            if text:
+                clipboard = QGuiApplication.clipboard()
+                if clipboard is not None:
+                    clipboard.setText(text)
+                QToolTip.showText(
+                    event.globalPosition().toPoint(),
+                    "已复制",
+                    self,
+                )
+                event.accept()
+                return
+        super().mousePressEvent(event)
 
 
 class _CoverViewerDialog(QDialog):

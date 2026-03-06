@@ -15,6 +15,7 @@ class Project:
     item_tags: dict[str, list[str]] = field(default_factory=dict)
     customer_code: str | None = None
     part_number: str | None = None
+    material: str | None = None
     description: str | None = None
     cover_image: str | None = None
     is_special: bool = False

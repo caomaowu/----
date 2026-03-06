@@ -57,6 +57,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             project_dir TEXT NOT NULL,
             description TEXT,
             part_number TEXT,
+            material TEXT,
             pinned INTEGER NOT NULL DEFAULT 0,
             last_open_time TEXT,
             open_count INTEGER NOT NULL DEFAULT 0
@@ -181,6 +182,8 @@ def _ensure_project_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE projects ADD COLUMN open_count INTEGER NOT NULL DEFAULT 0;")
     if "part_number" not in cols:
         conn.execute("ALTER TABLE projects ADD COLUMN part_number TEXT;")
+    if "material" not in cols:
+        conn.execute("ALTER TABLE projects ADD COLUMN material TEXT;")
 
 
 def _try_enable_fts5(conn: sqlite3.Connection) -> bool:
@@ -189,9 +192,9 @@ def _try_enable_fts5(conn: sqlite3.Connection) -> bool:
         # PRAGMA table_info returns list of tuples (cid, name, type, notnull, dflt_value, pk)
         cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(project_fts);").fetchall()}
         
-        # If table exists but part_number is missing, we must recreate it because FTS5 tables don't support ALTER TABLE properly
+        # If table exists but part_number/material is missing, we must recreate it because FTS5 tables don't support ALTER TABLE properly
         if "project_fts" in {str(r[0]) for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table';").fetchall()}:
-             if "part_number" not in cols:
+             if "part_number" not in cols or "material" not in cols:
                  conn.execute("DROP TABLE project_fts;")
 
         conn.execute(
@@ -201,6 +204,7 @@ def _try_enable_fts5(conn: sqlite3.Connection) -> bool:
                 customer,
                 name,
                 part_number,
+                material,
                 tags,
                 dir_name,
                 description,
@@ -246,12 +250,13 @@ def upsert_project(
     project_dir: str,
     description: str | None,
     part_number: str | None,
+    material: str | None,
     fts5_enabled: bool,
 ) -> None:
     conn.execute(
         """
-        INSERT INTO projects(id, customer, name, tags_json, status, create_time, month, project_dir, description, part_number)
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO projects(id, customer, name, tags_json, status, create_time, month, project_dir, description, part_number, material)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             customer=excluded.customer,
             name=excluded.name,
@@ -261,9 +266,10 @@ def upsert_project(
             month=excluded.month,
             project_dir=excluded.project_dir,
             description=excluded.description,
-            part_number=excluded.part_number;
+            part_number=excluded.part_number,
+            material=excluded.material;
         """,
-        (project_id, customer or "", name, json.dumps(tags, ensure_ascii=False), status, create_time, month, project_dir, description, part_number),
+        (project_id, customer or "", name, json.dumps(tags, ensure_ascii=False), status, create_time, month, project_dir, description, part_number, material),
     )
 
     if not fts5_enabled:
@@ -273,8 +279,8 @@ def upsert_project(
     dir_name = Path(project_dir).name
     conn.execute("DELETE FROM project_fts WHERE id = ?;", (project_id,))
     conn.execute(
-        "INSERT INTO project_fts(id, customer, name, part_number, tags, dir_name, description) VALUES(?, ?, ?, ?, ?, ?, ?);",
-        (project_id, customer or "", name, part_number or "", tags_text, dir_name, description or ""),
+        "INSERT INTO project_fts(id, customer, name, part_number, material, tags, dir_name, description) VALUES(?, ?, ?, ?, ?, ?, ?, ?);",
+        (project_id, customer or "", name, part_number or "", material or "", tags_text, dir_name, description or ""),
     )
 
 
@@ -430,6 +436,8 @@ def search_project_ids(
             OR p.tags_json LIKE ?
             OR p.project_dir LIKE ?
             OR COALESCE(p.description, '') LIKE ?
+            OR COALESCE(p.part_number, '') LIKE ?
+            OR COALESCE(p.material, '') LIKE ?
             OR f.file_name LIKE ?
             OR f.rel_path LIKE ?
             OR it.tag LIKE ?
@@ -441,7 +449,7 @@ def search_project_ids(
             datetime(COALESCE(p.last_open_time, p.create_time)) DESC
         LIMIT ?;
         """,
-        (1 if include_archived else 0, like, like, like, like, like, like, like, like, like, like, limit),
+        (1 if include_archived else 0, like, like, like, like, like, like, like, like, like, like, like, limit),
     ).fetchall()
     return [str(r["id"]) for r in rows]
 

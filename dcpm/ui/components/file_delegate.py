@@ -11,8 +11,14 @@ class FileItemDelegate(QStyledItemDelegate):
         self.icon_size = 48
         self.tag_provider = tag_provider
         self.thumbnail_provider = thumbnail_provider
-        
+        self.view_mode = "icon" # "icon" or "list"
+
+    def set_view_mode(self, mode: str):
+        self.view_mode = mode
+
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:
+        if self.view_mode == "list":
+            return QSize(option.rect.width(), 36)
         return QSize(100, 130)  # Width, Height for grid items
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex):
@@ -23,15 +29,131 @@ class FileItemDelegate(QStyledItemDelegate):
 
         # Draw background for selection/hover
         if option.state & QStyle.StateFlag.State_Selected:
-            painter.setBrush(QColor(COLORS['primary_light']))
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawRoundedRect(rect.adjusted(4, 4, -4, -4), 8, 8)
+            # List mode selection style
+            if self.view_mode == "list":
+                painter.setBrush(QColor(COLORS['primary_light']))
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.drawRoundedRect(rect.adjusted(2, 2, -2, -2), 4, 4)
+            else:
+                painter.setBrush(QColor(COLORS['primary_light']))
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.drawRoundedRect(rect.adjusted(4, 4, -4, -4), 8, 8)
         elif option.state & QStyle.StateFlag.State_MouseOver:
-            painter.setBrush(QColor(COLORS['bg'])) # Slightly darker than app bg
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawRoundedRect(rect.adjusted(4, 4, -4, -4), 8, 8)
+            if self.view_mode == "list":
+                painter.setBrush(QColor(COLORS['bg']))
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.drawRoundedRect(rect.adjusted(2, 2, -2, -2), 4, 4)
+            else:
+                painter.setBrush(QColor(COLORS['bg'])) # Slightly darker than app bg
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.drawRoundedRect(rect.adjusted(4, 4, -4, -4), 8, 8)
 
-        # --- 布局计算 (自上而下) ---
+        # 获取数据
+        file_path = ""
+        model = index.model()
+        if isinstance(model, QFileSystemModel):
+            file_path = model.filePath(index)
+
+        # --- 列表模式渲染 ---
+        if self.view_mode == "list":
+            icon_size = 24
+            padding = 8
+            
+            # 1. 图标
+            icon_rect = QRect(rect.x() + padding, rect.y() + (rect.height() - icon_size)//2, icon_size, icon_size)
+            
+            # Try Thumbnail first
+            icon_drawn = False
+            if self.thumbnail_provider and file_path:
+                thumb = self.thumbnail_provider.get_thumbnail(file_path)
+                if thumb:
+                    scaled = thumb.scaled(
+                        icon_size, icon_size,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation
+                    )
+                    # Center in icon_rect
+                    tx = icon_rect.x() + (icon_size - scaled.width()) // 2
+                    ty = icon_rect.y() + (icon_size - scaled.height()) // 2
+                    painter.drawPixmap(tx, ty, scaled)
+                    icon_drawn = True
+
+            # Fallback to Icon
+            if not icon_drawn:
+                icon_q = index.data(Qt.ItemDataRole.DecorationRole)
+                if icon_q:
+                    pixmap = icon_q.pixmap(icon_size, icon_size)
+                    painter.drawPixmap(icon_rect.x(), icon_rect.y(), pixmap)
+            
+            # 2. 文件名
+            name = index.data(Qt.ItemDataRole.DisplayRole)
+            text_x = icon_rect.right() + 12
+            
+            # 计算标签宽度
+            tags = []
+            if callable(self.tag_provider):
+                try:
+                    tags = list(self.tag_provider(index) or [])
+                except Exception:
+                    tags = []
+            
+            tag_width = 0
+            if tags:
+                # 预估标签宽度
+                fm_tag = painter.fontMetrics()
+                # 简单估算：每个标签大约 60px? 准确计算比较好
+                # 列表模式只显示前 3 个
+                display_tags = tags[:3]
+                if len(tags) > 3:
+                    display_tags.append(f"+{len(tags)-3}")
+                
+                # 标签放在右侧
+                tag_gap = 6
+                tag_padding = 12 # inner padding sum
+                for t in display_tags:
+                    tag_width += fm_tag.horizontalAdvance(t) + tag_padding + tag_gap
+            
+            text_width = rect.width() - text_x - tag_width - padding
+            text_rect = QRect(text_x, rect.y(), text_width, rect.height())
+            
+            painter.setPen(QColor(COLORS['text']))
+            elided_text = option.fontMetrics.elidedText(name, Qt.TextElideMode.ElideMiddle, text_rect.width())
+            painter.drawText(text_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided_text)
+            
+            # 3. 标签 (右对齐)
+            if tags:
+                tag_x = rect.right() - padding - tag_width + 12 # adjust
+                tag_y = rect.y() + (rect.height() - 20) // 2 # 20px height for tags
+                
+                display_tags = tags[:3]
+                if len(tags) > 3:
+                    display_tags.append(f"+{len(tags)-3}")
+
+                tag_font = option.font
+                tag_font.setPointSize(9)
+                painter.setFont(tag_font)
+                fm2 = painter.fontMetrics()
+                
+                for t in display_tags:
+                    bg_hex, text_hex = get_tag_colors(t)
+                    w = fm2.horizontalAdvance(t) + 12
+                    chip_rect = QRect(tag_x, tag_y, w, 20)
+                    
+                    painter.setBrush(QColor(bg_hex))
+                    border_color = QColor(text_hex)
+                    border_color.setAlpha(80)
+                    painter.setPen(border_color)
+                    painter.drawRoundedRect(chip_rect, 4, 4) # smaller radius
+                    
+                    painter.setPen(QColor(text_hex))
+                    painter.drawText(chip_rect, Qt.AlignmentFlag.AlignCenter, t)
+                    
+                    tag_x += w + 6
+
+            painter.restore()
+            return
+
+        # --- 图标模式渲染 (保持原有逻辑) ---
         
         # 1. 图标区域 (固定在顶部)
         icon_top_margin = 12
@@ -55,30 +177,22 @@ class FileItemDelegate(QStyledItemDelegate):
         icon_drawn = False
         
         # Try Thumbnail first
-        if self.thumbnail_provider:
-            # Get file path from model
-            model = index.model()
-            if isinstance(model, QFileSystemModel):
-                path = model.filePath(index)
-                thumb = self.thumbnail_provider.get_thumbnail(path)
-                if thumb:
-                    # Draw thumbnail (centered and scaled to fit icon area, maybe slightly larger)
-                    # Use a slightly larger size for thumbnails if desired, or keep uniform
-                    # Let's keep uniform icon_size for now, but thumbnails usually look better if they fill the box
-                    
-                    # Scale thumbnail to fit within (icon_size, icon_size) preserving aspect ratio
-                    scaled_thumb = thumb.scaled(
-                        self.icon_size, self.icon_size,
-                        Qt.AspectRatioMode.KeepAspectRatio,
-                        Qt.TransformationMode.SmoothTransformation
-                    )
-                    
-                    # Center the thumbnail
-                    tx = icon_x + (self.icon_size - scaled_thumb.width()) // 2
-                    ty = icon_y + (self.icon_size - scaled_thumb.height()) // 2
-                    
-                    painter.drawPixmap(tx, ty, scaled_thumb)
-                    icon_drawn = True
+        if self.thumbnail_provider and file_path:
+             thumb = self.thumbnail_provider.get_thumbnail(file_path)
+             if thumb:
+                 # Scale thumbnail to fit within (icon_size, icon_size) preserving aspect ratio
+                 scaled_thumb = thumb.scaled(
+                     self.icon_size, self.icon_size,
+                     Qt.AspectRatioMode.KeepAspectRatio,
+                     Qt.TransformationMode.SmoothTransformation
+                 )
+                 
+                 # Center the thumbnail
+                 tx = icon_x + (self.icon_size - scaled_thumb.width()) // 2
+                 ty = icon_y + (self.icon_size - scaled_thumb.height()) // 2
+                 
+                 painter.drawPixmap(tx, ty, scaled_thumb)
+                 icon_drawn = True
 
         # Fallback to Icon
         if not icon_drawn:

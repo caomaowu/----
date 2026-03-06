@@ -33,11 +33,33 @@ class ManageProjectDialog(QDialog):
         self._name_edit.setPlaceholderText("项目名称")
         self._add_field(layout, "项目名称", self._name_edit)
 
-        # 1.5 Part Number
+        # 1.5 Part Number & Material
+        row1_5 = QHBoxLayout()
+        row1_5.setSpacing(24)
+
+        # Part Number
         self._part_number_edit = LineEdit(self)
         self._part_number_edit.setText(entry.project.part_number or "")
         self._part_number_edit.setPlaceholderText("料号")
-        self._add_field(layout, "料号", self._part_number_edit)
+        
+        pn_layout = QVBoxLayout()
+        pn_layout.setSpacing(8)
+        pn_layout.addWidget(StrongBodyLabel("料号", self))
+        pn_layout.addWidget(self._part_number_edit)
+        row1_5.addLayout(pn_layout)
+
+        # Material
+        self._material_edit = LineEdit(self)
+        self._material_edit.setText(entry.project.material or "")
+        self._material_edit.setPlaceholderText("材料")
+        
+        mat_layout = QVBoxLayout()
+        mat_layout.setSpacing(8)
+        mat_layout.addWidget(StrongBodyLabel("材料", self))
+        mat_layout.addWidget(self._material_edit)
+        row1_5.addLayout(mat_layout)
+
+        layout.addLayout(row1_5)
 
         # 2. Status & Pinned (Row)
         row2 = QHBoxLayout()
@@ -234,6 +256,8 @@ class ManageProjectDialog(QDialog):
     def name(self): return self._name_edit.text().strip()
     @property
     def part_number(self): return self._part_number_edit.text().strip() or None
+    @property
+    def material(self): return self._material_edit.text().strip() or None
     @property
     def tags_list(self): return self._tags_edit.text().split(",")
     @property

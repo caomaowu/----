@@ -131,6 +131,7 @@ def rebuild_index(
                 project_dir=str(entry.project_dir),
                 description=entry.project.description,
                 part_number=entry.project.part_number,
+                material=entry.project.material,
                 fts5_enabled=db.fts5_enabled,
             )
             replace_project_files(
@@ -174,6 +175,7 @@ def upsert_one_project(library_root: Path, entry: ProjectEntry) -> IndexDb:
             project_dir=str(entry.project_dir),
             description=entry.project.description,
             part_number=entry.project.part_number,
+            material=entry.project.material,
             fts5_enabled=db.fts5_enabled,
         )
         replace_project_files(
@@ -273,6 +275,8 @@ def search(library_root: Path, query: str, limit: int = 200, include_archived: b
                 status=str(row["status"]),
                 tags=[str(t) for t in tags],
                 description=row.get("description"),
+                part_number=row.get("part_number"),
+                material=row.get("material"),
             )
         entries.append(
             ProjectEntry(

@@ -51,6 +51,7 @@ def read_project_metadata(path: Path) -> Project:
         customer=customer,
         customer_code=data.get("customer_code"),
         part_number=data.get("part_number"),
+        material=data.get("material"),
         create_time=create_time,
         status=str(data.get("status") or "ongoing"),
         tags=[str(x) for x in tags],
@@ -71,6 +72,7 @@ def update_project_metadata(
     description: str | None = None,
     cover_image: str | None = None,
     part_number: str | None = None,
+    material: str | None = None,
     is_special: bool | None = None,
 ) -> Project:
     old = read_project_metadata(path)
@@ -83,6 +85,7 @@ def update_project_metadata(
         customer=old.customer,
         customer_code=old.customer_code,
         part_number=part_number if part_number is not None else old.part_number,
+        material=material if material is not None else old.material,
         create_time=old.create_time,
         status=status or old.status,
         tags=tags if tags is not None else old.tags,

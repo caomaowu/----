@@ -80,6 +80,7 @@ class DashboardView(QWidget):
         self._view_mode = "grid"
         self._status_filter = "all"
         self._time_filter = "all"
+        self._tag_filter = "all"
         self._search_query = ""
         self._auto_index_attempted = False
         
@@ -310,6 +311,7 @@ class DashboardView(QWidget):
 
     def _apply_filter(self) -> None:
         q = self._search_query.lower()
+        terms = [term for term in q.split() if term]
         filtered = []
 
         for entry in self._all_projects:
@@ -333,8 +335,25 @@ class DashboardView(QWidget):
                 if self._tag_filter not in entry.project.tags:
                     continue
 
-            # 3. Search Query - Handled by Backend now
-            # We trust _all_projects contains the relevant search results
+            # 3. Search Query
+            if terms:
+                item_tags = []
+                for tags in (entry.project.item_tags or {}).values():
+                    item_tags.extend(tags or [])
+
+                searchable = " ".join([
+                    entry.project.id or "",
+                    entry.project.name or "",
+                    entry.project.customer or "",
+                    entry.project.customer_code or "",
+                    entry.project.part_number or "",
+                    entry.project.material or "",
+                    entry.project.description or "",
+                    " ".join(entry.project.tags or []),
+                    " ".join(item_tags),
+                ]).lower()
+                if not all(term in searchable for term in terms):
+                    continue
             
             # 4. Archive Hiding
             if entry.project.status == "archived":
@@ -566,13 +585,13 @@ class DashboardView(QWidget):
                 if desired == "archived" and not is_archived_dir:
                     res = archive_project(root, Path(entry.project_dir))
                     final_dir = res.project_dir
-                    final_project, final_dir = edit_project_metadata(root, final_dir, name=dlg.name, tags=dlg.tags_list, status=desired, description=dlg.description, part_number=dlg.part_number, is_special=dlg.is_special)
+                    final_project, final_dir = edit_project_metadata(root, final_dir, name=dlg.name, tags=dlg.tags_list, status=desired, description=dlg.description, part_number=dlg.part_number, material=dlg.material, is_special=dlg.is_special)
                 elif desired != "archived" and is_archived_dir:
                     res = unarchive_project(root, Path(entry.project_dir), status=desired)
                     final_dir = res.project_dir
-                    final_project, final_dir = edit_project_metadata(root, final_dir, name=dlg.name, tags=dlg.tags_list, status=desired, description=dlg.description, part_number=dlg.part_number, is_special=dlg.is_special)
+                    final_project, final_dir = edit_project_metadata(root, final_dir, name=dlg.name, tags=dlg.tags_list, status=desired, description=dlg.description, part_number=dlg.part_number, material=dlg.material, is_special=dlg.is_special)
                 else:
-                    final_project, final_dir = edit_project_metadata(root, final_dir, name=dlg.name, tags=dlg.tags_list, status=desired, description=dlg.description, part_number=dlg.part_number, is_special=dlg.is_special)
+                    final_project, final_dir = edit_project_metadata(root, final_dir, name=dlg.name, tags=dlg.tags_list, status=desired, description=dlg.description, part_number=dlg.part_number, material=dlg.material, is_special=dlg.is_special)
 
                 if dlg.cover_cleared:
                     final_project = clear_project_cover(final_dir)

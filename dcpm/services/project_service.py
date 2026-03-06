@@ -21,6 +21,7 @@ class CreateProjectRequest:
     customer: str | None = None
     customer_code: str | None = None
     part_number: str | None = None
+    material: str | None = None
     description: str | None = None
     is_special: bool = False
 
@@ -124,6 +125,7 @@ def create_project(library_root: Path, req: CreateProjectRequest) -> CreateProje
         customer=req.customer.strip() if req.customer else None,
         customer_code=req.customer_code.strip() if req.customer_code else None,
         part_number=req.part_number.strip() if req.part_number else None,
+        material=req.material.strip() if req.material else None,
         create_time=create_time,
         status="ongoing",
         tags=[t for t in (x.strip() for x in req.tags) if t],
@@ -143,6 +145,7 @@ def edit_project_metadata(
     status: str | None = None,
     description: str | None = None,
     part_number: str | None = None,
+    material: str | None = None,
     is_special: bool | None = None,
 ) -> tuple[Project, Path]:
     meta_path = Path(project_dir) / ".project.json"
@@ -199,7 +202,7 @@ def edit_project_metadata(
     if tags is not None:
         tags = [t for t in (x.strip() for x in tags) if t]
         
-    p = update_project_metadata(meta_path, name=name, tags=tags, status=status, description=description, part_number=part_number, is_special=is_special)
+    p = update_project_metadata(meta_path, name=name, tags=tags, status=status, description=description, part_number=part_number, material=material, is_special=is_special)
     return p, current_dir
 
 

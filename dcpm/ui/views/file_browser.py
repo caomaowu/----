@@ -5,7 +5,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, pyqtSignal, QModelIndex, QPoint, QDir, QUrl, QMimeData
+from PyQt6.QtCore import Qt, pyqtSignal, QModelIndex, QPoint, QDir, QUrl, QMimeData, QSize
 from PyQt6.QtGui import QDesktopServices, QAction, QFileSystemModel
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QListView, QMenu, QApplication, QFrame, QInputDialog,
@@ -26,6 +26,7 @@ from dcpm.ui.views.inspection_timeline import InspectionTimeline
 from dcpm.ui.views.shared_drive_browser import SharedDriveBrowser
 from dcpm.ui.components.file_delegate import FileItemDelegate
 from dcpm.ui.dialogs.tag_dialog import TagDialog
+from dcpm.ui.dialogs.input_dialog import InputDialog
 
 class FileBrowser(QWidget):
     backRequested = pyqtSignal()
@@ -197,6 +198,12 @@ class FileBrowser(QWidget):
         self.open_explorer_btn.clicked.connect(self._open_in_explorer)
         header.addWidget(self.open_explorer_btn)
         
+        # View Mode Toggle
+        self.view_mode_btn = TransparentToolButton(FluentIcon.TILES, self)
+        self.view_mode_btn.setToolTip("切换视图")
+        self.view_mode_btn.clicked.connect(self._toggle_view_mode)
+        header.addWidget(self.view_mode_btn)
+        
         self.refresh_btn = TransparentToolButton(FluentIcon.SYNC, self)
         self.refresh_btn.setToolTip("刷新")
         self.refresh_btn.clicked.connect(self._refresh)
@@ -241,6 +248,30 @@ class FileBrowser(QWidget):
         self.list_view.customContextMenuRequested.connect(self._show_context_menu)
 
         self.file_view_layout.addWidget(self.list_view)
+
+    def _toggle_view_mode(self):
+        if self.list_view.viewMode() == QListView.ViewMode.IconMode:
+            # Switch to List Mode
+            self.list_view.setViewMode(QListView.ViewMode.ListMode)
+            self.list_view.setGridSize(QSize()) # Reset grid size to default (let list view handle it)
+            self.list_view.setSpacing(0) # Reduce spacing for compact list
+            self.view_mode_btn.setIcon(FluentIcon.MENU)
+            
+            # Delegate needs to know it's in list mode to adjust rendering
+            if hasattr(self.delegate, 'set_view_mode'):
+                self.delegate.set_view_mode("list")
+        else:
+            # Switch to Icon Mode
+            self.list_view.setViewMode(QListView.ViewMode.IconMode)
+            self.list_view.setGridSize(QSize()) # Reset to let adjust logic handle it, or set explicit if needed
+            self.list_view.setSpacing(8)
+            self.view_mode_btn.setIcon(FluentIcon.TILES)
+            
+            if hasattr(self.delegate, 'set_view_mode'):
+                self.delegate.set_view_mode("icon")
+        
+        # Force redraw
+        self.list_view.viewport().update()
 
     def browse_external_folder(self, path: str, source: str = "inspection"):
         """Enter immersive browsing mode for external folder (inspection or shared)"""
@@ -349,22 +380,58 @@ class FileBrowser(QWidget):
             return []
         return self._item_tags.get(rel, [])
 
-    def _edit_tags(self, fs_path: str):
+    def _edit_tags(self, fs_path: str | list[str]):
         if not self.project_root:
             return
-        rel = self._rel_path_for_fs_path(fs_path)
-        if not rel:
+            
+        paths = fs_path if isinstance(fs_path, list) else [fs_path]
+        if not paths:
             return
-        current = self._item_tags.get(rel, [])
-        w = TagDialog("设置标签", ", ".join(current), self.window())
+
+        # 转换为相对路径并过滤无效路径
+        rel_paths = []
+        for p in paths:
+            rel = self._rel_path_for_fs_path(p)
+            if rel:
+                rel_paths.append(rel)
+        
+        if not rel_paths:
+            return
+            
+        # 确定初始显示的标签内容
+        # 如果是单选，显示该文件的标签
+        # 如果是多选，显示这些文件的共有标签（交集）
+        if len(rel_paths) == 1:
+            current = self._item_tags.get(rel_paths[0], [])
+            init_text = ", ".join(current)
+        else:
+            # 计算交集
+            sets = [set(self._item_tags.get(r, [])) for r in rel_paths]
+            common = set.intersection(*sets) if sets else set()
+            init_text = ", ".join(sorted(list(common)))
+            
+        title = "设置标签"
+        if len(rel_paths) > 1:
+            title = f"设置标签 ({len(rel_paths)} 项)"
+            
+        w = TagDialog(title, init_text, self.window())
         if w.exec():
             tags = self.tag_service.parse_tags_text(w.get_text())
             try:
-                self._item_tags = self.tag_service.set_item_tags(self.project_root, rel, tags)
+                if len(rel_paths) == 1:
+                    self._item_tags = self.tag_service.set_item_tags(self.project_root, rel_paths[0], tags)
+                else:
+                    self._item_tags = self.tag_service.batch_set_item_tags(self.project_root, rel_paths, tags)
+                
                 self.list_view.viewport().update()
+                
+                msg = "标签已更新"
+                if len(rel_paths) > 1:
+                    msg = f"已更新 {len(rel_paths)} 个项目的标签"
+                    
                 InfoBar.success(
                     title="已保存",
-                    content="标签已更新",
+                    content=msg,
                     orient=Qt.Orientation.Horizontal,
                     isClosable=True,
                     position=InfoBarPosition.BOTTOM_RIGHT,
@@ -522,59 +589,85 @@ class FileBrowser(QWidget):
             }}
         """)
         
+        # 处理多选
+        selected_indexes = self.list_view.selectionModel().selectedIndexes()
+        selected_paths = []
+        if selected_indexes:
+            selected_paths = list(set([self.model.filePath(idx) for idx in selected_indexes if idx.isValid()]))
+
         if index.isValid():
             path = self.model.filePath(index)
             
+            # 如果右键点击的项不在选中列表中，则视为单选该项
+            if path not in selected_paths:
+                selected_paths = [path]
+            
             # --- Open / Explore ---
-            open_action = QAction(FluentIcon.ACCEPT.icon(), "打开", self)
-            open_action.triggered.connect(lambda: self._on_item_double_clicked(index))
-            menu.addAction(open_action)
+            # 只有单选时才显示“打开”
+            if len(selected_paths) == 1:
+                open_action = QAction(FluentIcon.ACCEPT.icon(), "打开", self)
+                open_action.triggered.connect(lambda: self._on_item_double_clicked(index))
+                menu.addAction(open_action)
+                
+                explorer_action = QAction(FluentIcon.FOLDER.icon(), "在资源管理器中显示", self)
+                explorer_action.triggered.connect(lambda: subprocess.Popen(f'explorer /select,"{os.path.normpath(path)}"', shell=True))
+                menu.addAction(explorer_action)
+                
+                # Open With
+                if not Path(path).is_dir():
+                    open_with_action = QAction(FluentIcon.APPLICATION.icon(), "打开方式...", self)
+                    open_with_action.triggered.connect(lambda: subprocess.Popen(f'rundll32.exe shell32.dll,OpenAs_RunDLL {os.path.normpath(path)}', shell=True))
+                    menu.addAction(open_with_action)
+
+                menu.addSeparator()
+
+                # Note Action
+                note_action = QAction(FluentIcon.CHAT.icon(), "进入留言", self)
+                note_action.triggered.connect(lambda: self._enter_note(path))
+                menu.addAction(note_action)
+
+            # 设置标签 (支持多选)
+            tag_label = "设置标签"
+            if len(selected_paths) > 1:
+                tag_label = f"设置标签 ({len(selected_paths)} 项)"
             
-            explorer_action = QAction(FluentIcon.FOLDER.icon(), "在资源管理器中显示", self)
-            explorer_action.triggered.connect(lambda: subprocess.Popen(f'explorer /select,"{os.path.normpath(path)}"', shell=True))
-            menu.addAction(explorer_action)
-            
-            # Open With
-            if not Path(path).is_dir():
-                open_with_action = QAction(FluentIcon.APPLICATION.icon(), "打开方式...", self)
-                open_with_action.triggered.connect(lambda: subprocess.Popen(f'rundll32.exe shell32.dll,OpenAs_RunDLL {os.path.normpath(path)}', shell=True))
-                menu.addAction(open_with_action)
-
-            menu.addSeparator()
-
-            # Note Action
-            note_action = QAction(FluentIcon.CHAT.icon(), "进入留言", self)
-            note_action.triggered.connect(lambda: self._enter_note(path))
-            menu.addAction(note_action)
-
-            tag_action = QAction("设置标签", self)
-            tag_action.triggered.connect(lambda: self._edit_tags(path))
+            tag_action = QAction(tag_label, self)
+            tag_action.triggered.connect(lambda: self._edit_tags(selected_paths))
             menu.addAction(tag_action)
             
             menu.addSeparator()
             
             # --- Edit Actions ---
             # Copy File (to clipboard for pasting in Explorer)
-            copy_file_action = QAction(FluentIcon.COPY.icon(), "复制", self)
-            copy_file_action.triggered.connect(lambda: self._copy_file_to_clipboard(path))
-            menu.addAction(copy_file_action)
+            # 简单处理：仅支持复制第一个
+            if len(selected_paths) == 1:
+                copy_file_action = QAction(FluentIcon.COPY.icon(), "复制", self)
+                copy_file_action.triggered.connect(lambda: self._copy_file_to_clipboard(path))
+                menu.addAction(copy_file_action)
 
-            # Copy Path
-            copy_path_action = QAction(FluentIcon.LINK.icon(), "复制路径", self)
-            copy_path_action.triggered.connect(lambda: QApplication.clipboard().setText(os.path.normpath(path)))
-            menu.addAction(copy_path_action)
-            
-            menu.addSeparator()
+                # Copy Path
+                copy_path_action = QAction(FluentIcon.LINK.icon(), "复制路径", self)
+                copy_path_action.triggered.connect(lambda: QApplication.clipboard().setText(os.path.normpath(path)))
+                menu.addAction(copy_path_action)
+                
+                menu.addSeparator()
 
-            # Rename
-            rename_action = QAction(FluentIcon.EDIT.icon(), "重命名", self)
-            rename_action.triggered.connect(lambda: self._rename_item(index))
-            menu.addAction(rename_action)
+                # Rename
+                rename_action = QAction(FluentIcon.EDIT.icon(), "重命名", self)
+                rename_action.triggered.connect(lambda: self._rename_item(index))
+                menu.addAction(rename_action)
 
-            # Delete
-            delete_action = QAction(FluentIcon.DELETE.icon(), "删除", self)
-            delete_action.triggered.connect(lambda: self._delete_item(index))
-            menu.addAction(delete_action)
+            # Delete (支持多选)
+            # 目前 _delete_item 只支持单个 index，需要修改支持批量删除吗？
+            # 暂时先只在单选时显示删除，或者修改删除逻辑。
+            # 考虑到用户主要需求是“设置标签”，删除功能如果未要求修改，暂且保留单选删除，或者提示不支持批量删除。
+            # 为了稳妥，多选时暂时禁用删除，除非我修改 _delete_item。
+            # 但用户没有要求批量删除。
+            # 如果我保留单选删除逻辑：
+            if len(selected_paths) == 1:
+                delete_action = QAction(FluentIcon.DELETE.icon(), "删除", self)
+                delete_action.triggered.connect(lambda: self._delete_item(index))
+                menu.addAction(delete_action)
 
         else:
             # Background context menu
@@ -620,21 +713,26 @@ class FileBrowser(QWidget):
         old_path = Path(self.model.filePath(index))
         old_rel = self._rel_path_for_fs_path(str(old_path))
         
-        new_name, ok = QInputDialog.getText(self, "重命名", "请输入新名称:", text=old_name)
-        if ok and new_name and new_name != old_name:
-            new_path = old_path.parent / new_name
-            try:
-                os.rename(old_path, new_path)
-                new_rel = self._rel_path_for_fs_path(str(new_path))
-                if self.project_root and old_rel and new_rel:
-                    try:
-                        self._item_tags = self.tag_service.move_item(self.project_root, old_rel, new_rel)
-                        self.list_view.viewport().update()
-                    except Exception:
-                        pass
-            except Exception as e:
-                # Simple error handling
-                print(f"Rename failed: {e}")
+        w = InputDialog("重命名", "请输入新名称:", default_text=old_name, parent=self.window())
+        if w.exec():
+            new_name = w.text()
+            if new_name and new_name != old_name:
+                new_path = old_path.parent / new_name
+                try:
+                    os.rename(old_path, new_path)
+                    new_rel = self._rel_path_for_fs_path(str(new_path))
+                    if self.project_root and old_rel and new_rel:
+                        try:
+                            self._item_tags = self.tag_service.move_item(self.project_root, old_rel, new_rel)
+                            self.list_view.viewport().update()
+                        except Exception:
+                            pass
+                except Exception as e:
+                    InfoBar.error(
+                        title="重命名失败",
+                        content=str(e),
+                        parent=self
+                    )
 
     def _delete_item(self, index: QModelIndex):
         path = Path(self.model.filePath(index))
@@ -672,15 +770,17 @@ class FileBrowser(QWidget):
         if not parent_dir.exists():
             parent_dir = self.current_root
             
-        new_name, ok = QInputDialog.getText(self, "新建文件夹", "请输入文件夹名称:", text="新建文件夹")
-        if ok and new_name:
-            new_path = parent_dir / new_name
-            try:
-                new_path.mkdir(exist_ok=False)
-            except FileExistsError:
-                 pass # Or show error
-            except Exception as e:
-                print(f"Create folder failed: {e}")
+        w = InputDialog("新建文件夹", "请输入文件夹名称:", default_text="新建文件夹", parent=self.window())
+        if w.exec():
+            new_name = w.text()
+            if new_name:
+                new_path = parent_dir / new_name
+                try:
+                    new_path.mkdir(exist_ok=False)
+                except FileExistsError:
+                    InfoBar.warning("操作取消", "文件夹已存在", parent=self)
+                except Exception as e:
+                    InfoBar.error("创建失败", str(e), parent=self)
 
     def _create_new_file(self):
         current_idx = self.list_view.rootIndex()
@@ -688,15 +788,17 @@ class FileBrowser(QWidget):
         if not parent_dir.exists():
             parent_dir = self.current_root
             
-        new_name, ok = QInputDialog.getText(self, "新建文件", "请输入文件名:", text="new_file.txt")
-        if ok and new_name:
-            new_path = parent_dir / new_name
-            try:
-                # Create empty file
-                with open(new_path, 'w', encoding='utf-8') as f:
-                    pass
-            except Exception as e:
-                print(f"Create file failed: {e}")
+        w = InputDialog("新建文件", "请输入文件名:", default_text="new_file.txt", parent=self.window())
+        if w.exec():
+            new_name = w.text()
+            if new_name:
+                new_path = parent_dir / new_name
+                try:
+                    # Create empty file
+                    with open(new_path, 'w', encoding='utf-8') as f:
+                        pass
+                except Exception as e:
+                    InfoBar.error("创建失败", str(e), parent=self)
 
     def _paste_from_clipboard(self):
         clipboard = QApplication.clipboard()

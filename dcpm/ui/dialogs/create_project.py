@@ -39,6 +39,14 @@ class CreateProjectDialog(MessageBoxBase):
         self.viewLayout.addWidget(self.pnEdit)
         self.viewLayout.addSpacing(12)
         
+        # 材料
+        self.materialLabel = StrongBodyLabel("材料 (可选)", self)
+        self.materialEdit = LineEdit(self)
+        self.materialEdit.setPlaceholderText("例如: ADC12, 6061")
+        self.viewLayout.addWidget(self.materialLabel)
+        self.viewLayout.addWidget(self.materialEdit)
+        self.viewLayout.addSpacing(12)
+        
         # 项目名称
         self.nameLabel = StrongBodyLabel("项目名称", self)
         self.nameEdit = LineEdit(self)
@@ -82,5 +90,6 @@ class CreateProjectDialog(MessageBoxBase):
             name=self.nameEdit.text(),
             tags=self.tagsEdit.text().split(","),
             part_number=self.pnEdit.text(),
+            material=self.materialEdit.text(),
             is_special=self.specialCheckBox.isChecked()
         )

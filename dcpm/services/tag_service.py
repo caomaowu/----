@@ -70,6 +70,35 @@ class TagService:
         self._sync_index(project_dir, p.id, next_map)
         return next_map
 
+    def batch_set_item_tags(self, project_dir: Path, rel_paths: list[str], tags: list[str]) -> dict[str, list[str]]:
+        project_dir = Path(project_dir)
+        meta_path = project_dir / ".project.json"
+        p = read_project_metadata(meta_path)
+        
+        clean = [t.strip() for t in tags if str(t).strip()]
+        next_map = dict(p.item_tags)
+        
+        changed = False
+        for rel_path in rel_paths:
+            rel = _normalize_rel_path(rel_path)
+            if not rel:
+                continue
+            
+            if clean:
+                if next_map.get(rel) != clean:
+                    next_map[rel] = clean
+                    changed = True
+            else:
+                if rel in next_map:
+                    next_map.pop(rel)
+                    changed = True
+        
+        if changed:
+            update_project_metadata(meta_path, item_tags=next_map)
+            self._sync_index(project_dir, p.id, next_map)
+            
+        return next_map
+
     def move_item(self, project_dir: Path, old_rel: str, new_rel: str) -> dict[str, list[str]]:
         project_dir = Path(project_dir)
         meta_path = project_dir / ".project.json"
